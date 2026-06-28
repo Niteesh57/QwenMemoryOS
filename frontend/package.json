@@ -1,0 +1,45 @@
+{
+  "name": "test-qwen",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@langchain/core": "^1.2.1",
+    "@langchain/langgraph": "^1.4.7",
+    "@langchain/openai": "^1.5.3",
+    "@mcp-ui/client": "^7.1.1",
+    "@mcp-ui/server": "^6.1.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.6.1",
+    "@react-three/postprocessing": "^3.0.4",
+    "@shadergradient/react": "^2.4.20",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "html-to-image": "^1.11.13",
+    "motion": "^12.42.0",
+    "openai": "^6.45.0",
+    "postprocessing": "^6.39.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-speech-recognition": "^4.0.1",
+    "three": "^0.184.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.185.0",
+    "@vitejs/plugin-react": "^6.0.2",
+    "oxlint": "^1.69.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.0"
+  }
+}

@@ -1,0 +1,264 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+
+:root {
+  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: dark;
+  color: #f8fafc;
+  background-color: #050508;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* Premium Color Palette */
+  --bg-main: #06060c;
+  --bg-card: rgba(15, 15, 25, 0.55);
+  --bg-card-hover: rgba(25, 25, 40, 0.7);
+  --color-indigo: #6366f1;
+  --color-violet: #8b5cf6;
+  --color-pink: #ec4899;
+  --color-emerald: #10b981;
+  --color-amber: #f59e0b;
+  --border-glass: rgba(255, 255, 255, 0.08);
+  --border-glass-bright: rgba(255, 255, 255, 0.16);
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  
+  --shadow-neon: 0 0 30px rgba(99, 102, 241, 0.25);
+  --shadow-neon-pink: 0 0 30px rgba(236, 72, 153, 0.25);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #0d0915 0%, #06040a 100%);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+  font-family: 'Outfit', sans-serif;
+  color: #f8fafc;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Glassmorphism helpers */
+.glass {
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-glass);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.glass:hover {
+  border-color: var(--border-glass-bright);
+}
+
+.hidden {
+  display: none;
+}
+
+/* Custom layout grids and flexboxes */
+.layout-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem;
+}
+
+/* Floating background ambient orbs */
+.orb {
+  position: absolute;
+  width: 400px;
+  height: 400px;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.15;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.orb-indigo {
+  background: var(--color-indigo);
+  top: -100px;
+  left: 20%;
+  animation: orb-float 20s infinite alternate;
+}
+
+.orb-pink {
+  background: var(--color-pink);
+  bottom: 100px;
+  right: 15%;
+  animation: orb-float 25s infinite alternate-reverse;
+}
+
+@keyframes orb-float {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  100% {
+    transform: translate(50px, 30px) scale(1.2);
+  }
+}
+
+/* Soundwaves animation for listening state */
+.soundwave-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 60px;
+  padding: 0 10px;
+}
+
+.soundwave-bar {
+  width: 4px;
+  height: 12px;
+  background: linear-gradient(to top, var(--color-indigo), var(--color-pink));
+  border-radius: 4px;
+  animation: wave-pulse 1.2s ease-in-out infinite alternate;
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.4);
+}
+
+.soundwave-bar:nth-child(1) { animation-delay: 0.1s; }
+.soundwave-bar:nth-child(2) { animation-delay: 0.3s; }
+.soundwave-bar:nth-child(3) { animation-delay: 0.6s; }
+.soundwave-bar:nth-child(4) { animation-delay: 0.2s; }
+.soundwave-bar:nth-child(5) { animation-delay: 0.5s; }
+.soundwave-bar:nth-child(6) { animation-delay: 0.4s; }
+.soundwave-bar:nth-child(7) { animation-delay: 0.7s; }
+.soundwave-bar:nth-child(8) { animation-delay: 0.3s; }
+
+@keyframes wave-pulse {
+  0% {
+    height: 8px;
+    opacity: 0.5;
+  }
+  100% {
+    height: 48px;
+    opacity: 1;
+  }
+}
+
+/* Dynamic styling for responsive widgets inside PiP */
+.widget-weather {
+  background: linear-gradient(135deg, rgba(25, 30, 60, 0.6) 0%, rgba(10, 10, 20, 0.8) 100%);
+  border-radius: 20px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.widget-tasks {
+  background: linear-gradient(135deg, rgba(30, 20, 50, 0.6) 0%, rgba(10, 10, 20, 0.8) 100%);
+  border-radius: 20px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.glow-btn {
+  position: relative;
+  background: linear-gradient(90deg, var(--color-indigo) 0%, var(--color-violet) 100%);
+  border: none;
+  border-radius: 12px;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  overflow: hidden;
+  box-shadow: var(--shadow-neon);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glow-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.6s ease;
+}
+
+.glow-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 40px rgba(99, 102, 241, 0.45);
+}
+
+.glow-btn:hover::before {
+  left: 100%;
+}
+
+.glow-btn:active {
+  transform: translateY(1px);
+}
+
+/* Custom animated background for processing state */
+.glowing-blob {
+  width: 70px;
+  height: 70px;
+  background: linear-gradient(45deg, var(--color-indigo), var(--color-pink));
+  border-radius: 50%;
+  filter: blur(10px);
+  animation: morph-glowing 3s ease-in-out infinite alternate;
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.6), 0 0 40px rgba(236, 72, 153, 0.4);
+}
+
+@keyframes morph-glowing {
+  0% {
+    border-radius: 50% 50% 50% 50% / 50% 50% 50% 50%;
+    transform: scale(1) rotate(0deg);
+  }
+  50% {
+    border-radius: 40% 60% 55% 45% / 45% 55% 60% 40%;
+    transform: scale(1.15) rotate(180deg);
+  }
+  100% {
+    border-radius: 60% 40% 45% 55% / 55% 45% 40% 60%;
+    transform: scale(1) rotate(360deg);
+  }
+}
+
+/* Wipe reveal animation for logo text on load */
+.wipe-reveal {
+  display: inline-block;
+  background: linear-gradient(90deg, #ffffff 0%, rgba(255, 255, 255, 0.7) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: wipe-text 2s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes wipe-text {
+  0% {
+    clip-path: inset(0 100% 0 0);
+    transform: translateX(-10px);
+    filter: blur(4px);
+    opacity: 0;
+  }
+  100% {
+    clip-path: inset(0 0 0 0);
+    transform: translateX(0);
+    filter: blur(0px);
+    opacity: 1;
+  }
+}
+
