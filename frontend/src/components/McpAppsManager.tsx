@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { AppRenderer } from '@mcp-ui/client';
 import { mcpClientService } from '../services/mcpClient';
 
-const HOST_INFO = { name: 'QwenOS', version: '1.0.0' };
+const HOST_INFO = { name: 'Qwen Memory OS', version: '1.0.0' };
 const HOST_CONTEXT = {
   theme: 'dark' as const,
   styles: {
@@ -31,7 +31,7 @@ export const McpAppsManager: React.FC = () => {
   const [registrations] = useState<MCPRegistration[]>([
     {
       id: 'local-qwen-server',
-      name: 'QwenOS MCP Backend Server',
+      name: 'Qwen Memory OS MCP Backend Server',
       description: 'SSE connection to the local Node.js server executing Qwen-Flash.',
       toolName: 'ask_qwen',
       mode: 'server',
@@ -77,7 +77,7 @@ export const McpAppsManager: React.FC = () => {
         <div style={{ padding: '14px 16px', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
             <svg viewBox="0 0 64 64" width="18" height="18"><rect x="4" y="4" width="56" height="56" rx="10" fill="#0f172a"/><path d="M32 12 L50 22 L50 42 L32 52 L14 42 L14 22 Z" fill="#3b82f6"/><circle cx="32" cy="32" r="5" fill="#ffffff"/></svg>
-            <span style={{ fontSize: '13px', fontWeight: 700, color: '#f8fafc' }}>QwenOS Integrations</span>
+            <span style={{ fontSize: '13px', fontWeight: 700, color: '#f8fafc' }}>Qwen Memory OS Integrations</span>
           </div>
           <span style={{ fontSize: '10px', color: '#64748b' }}>Active plugins</span>
         </div>
@@ -152,7 +152,7 @@ export const McpAppsManager: React.FC = () => {
                   </div>
                   <h3 style={{ fontSize: '18px', fontWeight: 700, margin: '0 0 10px 0', color: '#34d399' }}>MCP Tool: Connected</h3>
                   <p style={{ fontSize: '12.5px', color: '#94a3b8', lineHeight: 1.6, margin: 0 }}>
-                    The backend connection to your QwenOS local server is active. Voice transcript queries will be dispatched to the LLM and dynamic components will render in your picture-in-picture companion.
+                    The backend connection to your Qwen Memory OS local server is active. Voice transcript queries will be dispatched to the LLM and dynamic components will render in your picture-in-picture companion.
                   </p>
                 </>
               ) : connectionStatus === 'connecting' ? (
@@ -172,7 +172,7 @@ export const McpAppsManager: React.FC = () => {
                   </div>
                   <h3 style={{ fontSize: '18px', fontWeight: 700, margin: '0 0 10px 0', color: '#ef4444' }}>Access Denied / Disconnected</h3>
                   <p style={{ fontSize: '12.5px', color: '#94a3b8', lineHeight: 1.6, marginBottom: '24px' }}>
-                    The QwenOS backend is not running on port 3000. Start the server from your terminal:
+                    The Qwen Memory OS backend is not running on port 3000. Start the server from your terminal:
                   </p>
                   <code style={{ display: 'block', width: '100%', background: '#000', color: '#34d399', padding: '10px', borderRadius: '8px', fontSize: '11px', fontFamily: 'monospace', border: '1px solid rgba(255,255,255,0.05)', marginBottom: '24px' }}>
                     node server.js

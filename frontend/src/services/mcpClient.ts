@@ -45,7 +45,7 @@ class McpClientService {
     try {
       this.transport = new SSEClientTransport(new URL(url));
       this.client = new Client(
-        { name: 'QwenOS-Desktop-Client', version: '1.0.0' },
+        { name: 'Qwen-Memory-OS-Desktop-Client', version: '1.0.0' },
         { capabilities: {} }
       );
 

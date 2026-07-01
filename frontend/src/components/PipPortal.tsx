@@ -8,6 +8,7 @@ interface PipPortalProps {
   width?: number;
   height?: number;
   isSpeaking?: boolean;
+  onPipDocumentReady?: (doc: Document) => void;
 }
 
 export const isPipSupported = () => {
@@ -21,17 +22,16 @@ export const PipPortal: React.FC<PipPortalProps> = ({
   width = 360,
   height = 420,
   isSpeaking = true,
+  onPipDocumentReady,
 }) => {
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const pipWindowRef = useRef<any | null>(null);
 
-  // Monitor dynamic width, height, and isSpeaking changes to resize/style the window in real-time
+  // Monitor dynamic width, height, and isSpeaking changes
   useEffect(() => {
     if (pipWindowRef.current) {
       try {
         pipWindowRef.current.resizeTo(width, height);
-        
-        // Dynamically style body based on speaking state
         if (isSpeaking) {
           pipWindowRef.current.document.body.style.background = 'rgba(8, 8, 16, 0.72)';
           pipWindowRef.current.document.body.style.backdropFilter = 'blur(24px)';
@@ -42,7 +42,6 @@ export const PipPortal: React.FC<PipPortalProps> = ({
           pipWindowRef.current.document.body.style.webkitBackdropFilter = 'none';
         }
       } catch (e: any) {
-        // Suppress NotAllowedError warning on automated resizing (e.g. from stream completion)
         if (e && e.name !== 'NotAllowedError') {
           console.warn('[PiP Portal] Dynamic resize blocked by browser:', e);
         }
@@ -64,7 +63,6 @@ export const PipPortal: React.FC<PipPortalProps> = ({
 
     const openPipWindow = async () => {
       try {
-        // Open the Picture-in-Picture window
         const pipWindow = await (window as any).documentPictureInPicture.requestWindow({
           width,
           height,
@@ -73,36 +71,40 @@ export const PipPortal: React.FC<PipPortalProps> = ({
         pipWindowRef.current = pipWindow;
 
         // Copy stylesheets from main page to PiP window
-        const copyStyleSheets = () => {
-          const allStyleSheets = Array.from(document.styleSheets);
-          allStyleSheets.forEach((styleSheet) => {
-            try {
-              if (styleSheet.cssRules) {
-                const newStyle = pipWindow.document.createElement('style');
-                const rules = Array.from(styleSheet.cssRules)
-                  .map((rule) => rule.cssText)
-                  .join('\n');
-                newStyle.textContent = rules;
-                pipWindow.document.head.appendChild(newStyle);
-              } else if (styleSheet.href) {
-                const newLink = pipWindow.document.createElement('link');
-                newLink.rel = 'stylesheet';
-                newLink.href = styleSheet.href;
-                pipWindow.document.head.appendChild(newLink);
-              }
-            } catch (e) {
-              // Fallback to link tags for CORS restricted stylesheets
-              if (styleSheet.href) {
-                const newLink = pipWindow.document.createElement('link');
-                newLink.rel = 'stylesheet';
-                newLink.href = styleSheet.href;
-                pipWindow.document.head.appendChild(newLink);
-              }
+        const allStyleSheets = Array.from(document.styleSheets);
+        allStyleSheets.forEach((styleSheet) => {
+          try {
+            if (styleSheet.cssRules) {
+              const newStyle = pipWindow.document.createElement('style');
+              const rules = Array.from(styleSheet.cssRules)
+                .map((rule) => (rule as CSSRule).cssText)
+                .join('\n');
+              newStyle.textContent = rules;
+              pipWindow.document.head.appendChild(newStyle);
+            } else if (styleSheet.href) {
+              const newLink = pipWindow.document.createElement('link');
+              newLink.rel = 'stylesheet';
+              newLink.href = styleSheet.href;
+              pipWindow.document.head.appendChild(newLink);
             }
-          });
-        };
+          } catch (e) {
+            if ((styleSheet as any).href) {
+              const newLink = pipWindow.document.createElement('link');
+              newLink.rel = 'stylesheet';
+              newLink.href = (styleSheet as any).href;
+              pipWindow.document.head.appendChild(newLink);
+            }
+          }
+        });
 
-        copyStyleSheets();
+        // Inject user-select CSS to ensure text is selectable in the PiP window
+        const selectStyle = pipWindow.document.createElement('style');
+        selectStyle.textContent = `
+          * { box-sizing: border-box; }
+          .pip-selectable-text { user-select: text !important; -webkit-user-select: text !important; cursor: text; }
+          ::selection { background: rgba(139, 92, 246, 0.4); color: #fff; }
+        `;
+        pipWindow.document.head.appendChild(selectStyle);
 
         if (isSpeaking) {
           pipWindow.document.body.style.background = 'rgba(8, 8, 16, 0.72)';
@@ -118,11 +120,8 @@ export const PipPortal: React.FC<PipPortalProps> = ({
         pipWindow.document.body.style.overflow = 'hidden';
         pipWindow.document.body.style.height = '100vh';
         pipWindow.document.body.style.width = '100vw';
-
-        // Set the title of the PiP window
         pipWindow.document.title = 'AI Assistant';
 
-        // Create a root div for rendering the portal content
         const rootDiv = pipWindow.document.createElement('div');
         rootDiv.id = 'pip-portal-root';
         rootDiv.style.width = '100%';
@@ -131,7 +130,11 @@ export const PipPortal: React.FC<PipPortalProps> = ({
 
         setContainer(rootDiv);
 
-        // Listen for the PiP window closing
+        // ✅ Notify parent that PiP document is ready for selection listening
+        if (onPipDocumentReady) {
+          onPipDocumentReady(pipWindow.document);
+        }
+
         pipWindow.addEventListener('pagehide', () => {
           setContainer(null);
           pipWindowRef.current = null;

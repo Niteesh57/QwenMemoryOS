@@ -9,7 +9,7 @@ async function test() {
   try {
     const transport = new SSEClientTransport(new URL(url));
     const client = new Client(
-      { name: 'QwenOS-Test-Client', version: '1.0.0' },
+      { name: 'Qwen-Memory-OS-Test-Client', version: '1.0.0' },
       { capabilities: {} }
     );
 

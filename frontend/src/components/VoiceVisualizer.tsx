@@ -13,16 +13,18 @@ export const ChatGptVoiceOrb: React.FC<{ volume: number; state: VisualizerState;
   size = 80,
 }) => {
   const [rotation, setRotation] = useState(0);
+  const volumeRef = React.useRef(volume);
+  volumeRef.current = volume;
 
   useEffect(() => {
     let animId: number;
     const rotate = () => {
-      setRotation((prev) => (prev + 1.2 + volume * 0.05) % 360);
+      setRotation((prev) => (prev + 1.2 + volumeRef.current * 0.05) % 360);
       animId = requestAnimationFrame(rotate);
     };
     rotate();
     return () => cancelAnimationFrame(animId);
-  }, [volume]);
+  }, []); // ✅ Empty deps — runs once, reads volume via ref
 
   // Generate organic border radius based on volume and rotation
   const vFactor = volume / 100; // 0 to 1

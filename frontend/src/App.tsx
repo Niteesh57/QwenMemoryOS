@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { PipPortal, isPipSupported } from './components/PipPortal';
-import { VoiceCompanionBar, CodeBlock, parseResponseText, formatMarkdown } from './components/VoiceCompanionBar';
+import { VoiceCompanionBar, CodeBlock, parseResponseText, MarkdownBlock } from './components/VoiceCompanionBar';
 import { VoiceVisualizer } from './components/VoiceVisualizer';
 import { useCompanionController } from './hooks/useCompanionController';
 import { motion, useMotionValue, useSpring, useTransform, AnimatePresence } from 'motion/react';
 import { MeshGradientBackground } from './components/MeshGradientBackground';
 import { McpAppsManager } from './components/McpAppsManager';
+import { MemoryBookManager } from './components/MemoryBookManager';
+import { Battery, Wifi, Mic, MicOff, Tv, Bot, User } from 'lucide-react';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const MAG_RANGE = 130;
@@ -78,6 +80,34 @@ const AIChatIcon = () => (
   </svg>
 );
 
+const MemoryBookIcon = () => (
+  <svg viewBox="0 0 64 64" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="mem-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stopColor="#4f46e5" />
+        <stop offset="100%" stopColor="#7c3aed" />
+      </linearGradient>
+      <linearGradient id="mem-glow" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stopColor="#c084fc" />
+        <stop offset="100%" stopColor="#818cf8" />
+      </linearGradient>
+    </defs>
+    <rect x="4" y="4" width="56" height="56" rx="14" fill="url(#mem-bg)" />
+    {/* Book pages */}
+    <rect x="16" y="14" width="32" height="36" rx="4" fill="rgba(255,255,255,0.12)" />
+    <rect x="18" y="16" width="28" height="32" rx="3" fill="rgba(255,255,255,0.08)" />
+    {/* Lines representing events */}
+    <line x1="22" y1="24" x2="42" y2="24" stroke="url(#mem-glow)" strokeWidth="2" strokeLinecap="round" />
+    <line x1="22" y1="30" x2="38" y2="30" stroke="rgba(255,255,255,0.5)" strokeWidth="1.5" strokeLinecap="round" />
+    <line x1="22" y1="36" x2="40" y2="36" stroke="rgba(255,255,255,0.5)" strokeWidth="1.5" strokeLinecap="round" />
+    {/* Hot dot */}
+    <circle cx="44" cy="18" r="7" fill="#fb923c" />
+    <text x="44" y="22" textAnchor="middle" fontSize="8" fill="white" fontWeight="bold">🔥</text>
+    {/* Spine */}
+    <rect x="14" y="14" width="4" height="36" rx="2" fill="rgba(192,132,252,0.5)" />
+  </svg>
+);
+
 const SettingsIcon = () => (
   <svg viewBox="0 0 64 64" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
     <rect x="4" y="4" width="56" height="56" rx="14" fill="#4b5563" />
@@ -123,8 +153,8 @@ const MacWindow: React.FC<WindowWrapperProps> = ({
 }) => {
   if (!isOpen) return null;
 
-  const width = appId === 'vscode' ? 760 : appId === 'history' ? 780 : appId === 'mcp' ? 820 : 540;
-  const height = appId === 'vscode' ? 490 : appId === 'history' ? 480 : appId === 'mcp' ? 520 : 430;
+  const width = appId === 'vscode' ? 760 : appId === 'history' ? 780 : appId === 'mcp' ? 820 : appId === 'memory' ? 860 : 540;
+  const height = appId === 'vscode' ? 490 : appId === 'history' ? 480 : appId === 'mcp' ? 520 : appId === 'aichat' ? 220 : appId === 'memory' ? 580 : 430;
 
   return (
     <motion.div
@@ -348,6 +378,8 @@ export default function App() {
     }
   }, [activeSessionId]);
 
+  const currentTabSessionIdRef = useRef<string>(Date.now().toString());
+
   const addInteractionToHistory = (prompt: string, text: string, html: string | null) => {
     const newInteraction: ChatInteraction = {
       id: Date.now().toString(),
@@ -358,24 +390,46 @@ export default function App() {
     };
 
     setSessions((prev) => {
-      // Helper to generate dynamic title
-      const words = prompt.split(/\s+/).filter(Boolean);
-      let title = 'Speech Interaction';
-      if (words.length > 0) {
-        const cleanWords = words.map(w => w.replace(/[^\w\s]/g, ''));
-        const truncated = cleanWords.slice(0, 4).join(' ');
-        title = truncated.charAt(0).toUpperCase() + truncated.slice(1);
+      const existingSession = prev.find(s => s.id === currentTabSessionIdRef.current);
+
+      if (!existingSession) {
+        // Helper to generate dynamic title
+        const words = prompt.split(/\s+/).filter(Boolean);
+        let title = 'Speech Session';
+        if (words.length > 0) {
+          const cleanWords = words.map(w => w.replace(/[^\w\s]/g, ''));
+          const truncated = cleanWords.slice(0, 4).join(' ');
+          title = truncated.charAt(0).toUpperCase() + truncated.slice(1);
+        }
+
+        const newSession: ChatSession = {
+          id: currentTabSessionIdRef.current,
+          title,
+          timestamp: new Date().toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          interactions: [newInteraction],
+        };
+
+        setActiveSessionId(newSession.id);
+        return [newSession, ...prev];
+      } else {
+        setActiveSessionId(currentTabSessionIdRef.current);
+        return prev.map(s => {
+          if (s.id === currentTabSessionIdRef.current) {
+            const updatedInteractions = [...s.interactions, newInteraction];
+            
+            // If it reaches 50 messages, rotate session ID
+            if (updatedInteractions.length >= 50) {
+              currentTabSessionIdRef.current = Date.now().toString();
+            }
+            
+            return {
+              ...s,
+              interactions: updatedInteractions
+            };
+          }
+          return s;
+        });
       }
-
-      const newSession: ChatSession = {
-        id: Date.now().toString(),
-        title,
-        timestamp: new Date().toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        interactions: [newInteraction],
-      };
-
-      setActiveSessionId(newSession.id);
-      return [newSession, ...prev];
     });
   };
 
@@ -392,6 +446,9 @@ export default function App() {
       addInteractionToHistory(prompt, text, html);
     }
   });
+
+  // PiP document reference — set when the PiP window is opened
+  const [pipDocument, setPipDocument] = useState<Document | null>(null);
   
   // Window states
   const [openWindows, setOpenWindows] = useState<Record<string, boolean>>({
@@ -400,6 +457,7 @@ export default function App() {
     vscode: false,
     mcp: false,
     settings: false,
+    memory: false,
   });
   
   const [windowZIndex, setWindowZIndex] = useState<Record<string, number>>({
@@ -408,6 +466,7 @@ export default function App() {
     vscode: 10,
     mcp: 10,
     settings: 10,
+    memory: 10,
   });
 
   const [activeWindow, _setActiveWindow] = useState('aichat');
@@ -435,19 +494,54 @@ export default function App() {
     return localStorage.getItem('qwenos_tts_voice') || '';
   });
   const [ttsVoiceSearch, setTtsVoiceSearch] = useState<string>('');
+  const [ttsLanguage, setTtsLanguage] = useState<string>('all');
+
+  const [ttsRate, setTtsRate] = useState<number>(() => {
+    return parseFloat(localStorage.getItem('qwenos_tts_rate') || '1.0');
+  });
+  const [ttsPitch, setTtsPitch] = useState<number>(() => {
+    return parseFloat(localStorage.getItem('qwenos_tts_pitch') || '1.0');
+  });
+  const [ttsVolume, setTtsVolume] = useState<number>(() => {
+    return parseFloat(localStorage.getItem('qwenos_tts_volume') || '1.0');
+  });
 
   // Store all available browser voices in state — same pattern as MemeRenderer.tsx
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
 
   useEffect(() => {
-    const loadVoices = () => {
+    const loadVoices = async () => {
+      try {
+        console.log('[TTS Init] Fetching cloud voices from backend...');
+        const res = await fetch('http://localhost:3000/api/tts/voices');
+        if (!res.ok) throw new Error('API failure');
+        const cloudVoices = await res.json();
+        if (cloudVoices && cloudVoices.length > 0) {
+          setAvailableVoices(cloudVoices);
+          console.log('[TTS Init] Loaded cloud voices:', cloudVoices.length);
+          if (!localStorage.getItem('qwenos_tts_voice')) {
+            const defaultVoice = cloudVoices.find(v => v.lang.startsWith('en')) ?? cloudVoices[0];
+            if (defaultVoice) {
+              localStorage.setItem('qwenos_tts_voice', defaultVoice.name);
+              setTtsVoice(defaultVoice.name);
+            }
+          }
+          return;
+        }
+      } catch (err) {
+        console.warn('[TTS Init] Failed to load cloud voices, falling back to browser voices:', err);
+      }
+
       const all = window.speechSynthesis.getVoices();
       if (all.length > 0) {
-        setAvailableVoices(all);
-        console.log('[TTS Init] Voices loaded:', all.length);
-        // Auto-select first English voice if nothing selected yet
+        const nonGoogle = all.filter(v => !v.name.toLowerCase().includes('google'));
+        const filtered = nonGoogle.length > 0 ? nonGoogle : all;
+        
+        setAvailableVoices(filtered);
+        console.log('[TTS Init] Loaded local browser voices:', filtered.length);
+        
         if (!localStorage.getItem('qwenos_tts_voice')) {
-          const defaultVoice = all.find(v => v.lang.startsWith('en')) ?? all[0];
+          const defaultVoice = filtered.find(v => v.lang.startsWith('en')) ?? filtered[0];
           if (defaultVoice) {
             localStorage.setItem('qwenos_tts_voice', defaultVoice.name);
             setTtsVoice(defaultVoice.name);
@@ -516,6 +610,7 @@ export default function App() {
   const APPS_LIST = [
     { id: 'mcp', label: 'MCP Tools', icon: MCPIcon, hasWindow: true },
     { id: 'history', label: 'View History', icon: HistoryIcon, hasWindow: true },
+    { id: 'memory', label: 'Memory Book', icon: MemoryBookIcon, hasWindow: true },
     { id: 'vscode', label: 'VS Code', icon: VSCodeIcon, hasWindow: true },
     { id: 'aichat', label: 'AI Companion', icon: AIChatIcon, hasWindow: true },
     { id: 'settings', label: 'Settings', icon: SettingsIcon, hasWindow: true }
@@ -560,11 +655,15 @@ export default function App() {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <span className="wipe-reveal" style={{ fontWeight: 600, cursor: 'pointer' }}>QwenOS</span>
+          <span className="wipe-reveal" style={{ fontWeight: 600, cursor: 'pointer' }}>Qwen Memory OS</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <span style={{ opacity: 0.8 }}>🔋 98%</span>
-          <span style={{ opacity: 0.8 }}>📶</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '4px', opacity: 0.8 }}>
+            <Battery size={13} /> 98%
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', opacity: 0.8 }}>
+            <Wifi size={13} />
+          </span>
           <span style={{ fontWeight: 600 }}>{currentTime}</span>
         </div>
       </div>
@@ -589,6 +688,22 @@ export default function App() {
           )}
         </AnimatePresence>
 
+        {/* WINDOW: Memory Book */}
+        <AnimatePresence>
+          {openWindows.memory && (
+            <MacWindow
+              appId="memory"
+              label="Memory Book — Event-Native Memory System"
+              isOpen={openWindows.memory}
+              onClose={() => closeWindow('memory')}
+              zIndex={windowZIndex.memory}
+              defaultPos={{ x: 80, y: 50 }}
+              onFocus={() => bringToFront('memory')}
+            >
+              <MemoryBookManager />
+            </MacWindow>
+          )}
+        </AnimatePresence>
         {/* WINDOW 1: AI Chat (Voice Companion Control) */}
         <AnimatePresence>
           {openWindows.aichat && (
@@ -628,7 +743,15 @@ export default function App() {
                           cursor: 'pointer'
                         }}
                       >
-                        {controller.listening ? '🔴 Mute Mic' : '🎤 Unmute Mic'}
+                        {controller.listening ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', justifyContent: 'center', width: '100%' }}>
+                            <MicOff size={14} /> Mute Mic
+                          </span>
+                        ) : (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', justifyContent: 'center', width: '100%' }}>
+                            <Mic size={14} /> Unmute Mic
+                          </span>
+                        )}
                       </button>
 
                       <button
@@ -650,61 +773,11 @@ export default function App() {
                           cursor: 'pointer'
                         }}
                       >
-                        {controller.isPipOpen ? '📺 Overlay Open' : '📺 Launch PiP'}
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                          <Tv size={14} /> {controller.isPipOpen ? 'Overlay Open' : 'Launch PiP'}
+                        </span>
                       </button>
                     </div>
-                  </div>
-                </div>
-
-                {/* State Simulator Deck */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <span style={{ fontSize: '11px', color: '#64748b', fontWeight: 600, textTransform: 'uppercase' }}>Simulation Console</span>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
-                    <button
-                      onClick={() => {
-                        controller.setAssistantState('listening');
-                        showToast('Simulating microphone capture...');
-                      }}
-                      style={{ padding: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', color: '#cbd5e1', fontSize: '11.5px', cursor: 'pointer' }}
-                    >
-                      Listening
-                    </button>
-                    <button
-                      onClick={() => {
-                        controller.setAssistantState('processing');
-                        showToast('Simulating LLM request query...');
-                      }}
-                      style={{ padding: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', color: '#cbd5e1', fontSize: '11.5px', cursor: 'pointer' }}
-                    >
-                      Thinking
-                    </button>
-                    <button
-                      onClick={() => {
-                        controller.setAssistantState('idle');
-                        showToast('Simulating idle standby mode...');
-                      }}
-                      style={{ padding: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', color: '#cbd5e1', fontSize: '11.5px', cursor: 'pointer' }}
-                    >
-                      Idle
-                    </button>
-                  </div>
-                </div>
-
-                {/* Live Transcript Display Box */}
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <span style={{ fontSize: '11px', color: '#64748b', fontWeight: 600, textTransform: 'uppercase' }}>Speech Feed Output</span>
-                  <div style={{
-                    flex: 1,
-                    background: 'rgba(0, 0, 0, 0.2)',
-                    border: '1px solid rgba(255, 255, 255, 0.05)',
-                    borderRadius: '12px',
-                    padding: '14px',
-                    fontSize: '12.5px',
-                    color: controller.transcript ? '#f1f5f9' : '#4b5563',
-                    fontStyle: controller.transcript ? 'normal' : 'italic',
-                    overflowY: 'auto'
-                  }}>
-                    {controller.transcript ? `"${controller.transcript}"` : 'Awaiting microphone stream. Try speaking to transcribe.'}
                   </div>
                 </div>
 
@@ -928,8 +1001,8 @@ export default function App() {
                                 flexDirection: 'column',
                                 gap: '4px'
                               }}>
-                                <span style={{ fontSize: '9px', fontWeight: 700, color: '#f43f5e', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                                  🎤 User Query
+                                <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '9px', fontWeight: 700, color: '#f43f5e', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                                  <User size={10} /> User Query
                                 </span>
                                 <div style={{
                                   background: 'rgba(244, 63, 94, 0.06)',
@@ -952,8 +1025,8 @@ export default function App() {
                                 flexDirection: 'column',
                                 gap: '4px'
                               }}>
-                                <span style={{ fontSize: '9px', fontWeight: 700, color: '#a78bfa', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                                  🤖 Qwen Response
+                                <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '9px', fontWeight: 700, color: '#a78bfa', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                                  <Bot size={10} /> Qwen Memory OS Response
                                 </span>
                                 <div style={{
                                   background: 'rgba(255,255,255,0.02)',
@@ -981,11 +1054,18 @@ export default function App() {
                                     <div style={{ color: '#cbd5e1', fontSize: '13px', lineHeight: 1.6 }}>
                                       {parseResponseText(interaction.responseText).map((part, pIdx) => {
                                         if (part.type === 'code') {
+                                          if (part.language === 'markdown' || part.language === 'md') {
+                                            return (
+                                              <div key={pIdx} style={{ marginBottom: '8px' }}>
+                                                <MarkdownBlock text={part.content} />
+                                              </div>
+                                            );
+                                          }
                                           return <CodeBlock key={pIdx} content={part.content} language={part.language} />;
                                         }
                                         return (
                                           <div key={pIdx} style={{ marginBottom: '8px' }}>
-                                            {formatMarkdown(part.content)}
+                                            <MarkdownBlock text={part.content} />
                                           </div>
                                         );
                                       })}
@@ -1152,7 +1232,7 @@ export default function App() {
               <div style={{
                 display: 'flex',
                 width: '540px',
-                height: '320px',
+                height: '480px',
                 background: '#0d0d12',
                 color: '#f8fafc',
                 fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
@@ -1219,14 +1299,70 @@ export default function App() {
                         Select Voice
                       </label>
                       <span style={{ fontSize: '10px', color: '#64748b' }}>
-                        {availableVoices.length} voices available
+                        {ttsLanguage === 'all' 
+                          ? availableVoices.length 
+                          : availableVoices.filter(v => v.lang.split('-')[0].split('_')[0].toLowerCase() === ttsLanguage).length
+                        } voices available
                       </span>
+                    </div>
+
+                    {/* Language selector */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <label style={{ fontSize: '10.5px', color: '#94a3b8' }}>Voice Language</label>
+                      <select
+                        value={ttsLanguage}
+                        onChange={(e) => {
+                          const newLang = e.target.value;
+                          setTtsLanguage(newLang);
+                          if (newLang !== 'all') {
+                            // Auto-select first voice in that language
+                            const firstVoice = availableVoices.find(v => v.lang.split('-')[0].split('_')[0].toLowerCase() === newLang);
+                            if (firstVoice) {
+                              localStorage.setItem('qwenos_tts_voice', firstVoice.name);
+                              setTtsVoice(firstVoice.name);
+                              window.dispatchEvent(new Event('qwenos_voice_changed'));
+                            }
+                          }
+                        }}
+                        style={{
+                          background: 'rgba(255,255,255,0.04)',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          borderRadius: '8px',
+                          padding: '8px 12px',
+                          color: '#e2e8f0',
+                          fontSize: '12px',
+                          outline: 'none',
+                          cursor: 'pointer',
+                          width: '100%',
+                        }}
+                      >
+                        <option value="all" style={{ background: '#09090b', color: '#e2e8f0' }}>
+                          All Languages
+                        </option>
+                        {Array.from(new Set(availableVoices.map(v => v.lang.split('-')[0].split('_')[0].toLowerCase())))
+                          .sort()
+                          .map(lang => {
+                            const names: Record<string, string> = {
+                              en: 'English', es: 'Spanish', fr: 'French', de: 'German',
+                              it: 'Italian', ja: 'Japanese', ko: 'Korean', zh: 'Chinese',
+                              ru: 'Russian', pt: 'Portuguese', nl: 'Dutch', hi: 'Hindi',
+                              ar: 'Arabic', tr: 'Turkish', pl: 'Polish', sv: 'Swedish',
+                              fi: 'Finnish', no: 'Norwegian', da: 'Danish'
+                            };
+                            const friendlyName = names[lang] || lang.toUpperCase();
+                            return (
+                              <option key={lang} value={lang} style={{ background: '#09090b', color: '#e2e8f0' }}>
+                                {friendlyName} ({lang.toUpperCase()})
+                              </option>
+                            );
+                          })}
+                      </select>
                     </div>
 
                     {/* Search filter */}
                     <input
                       type="text"
-                      placeholder="Search voices..."
+                      placeholder="Search filtered voices..."
                       value={ttsVoiceSearch}
                       onChange={e => setTtsVoiceSearch(e.target.value)}
                       style={{
@@ -1244,7 +1380,7 @@ export default function App() {
 
                     {/* Scrollable voice list */}
                     <div style={{
-                      maxHeight: '220px',
+                      maxHeight: '120px',
                       overflowY: 'auto',
                       display: 'flex',
                       flexDirection: 'column',
@@ -1252,6 +1388,7 @@ export default function App() {
                       paddingRight: '4px',
                     }}>
                       {availableVoices
+                        .filter(v => ttsLanguage === 'all' || v.lang.split('-')[0].split('_')[0].toLowerCase() === ttsLanguage)
                         .filter(v => v.name.toLowerCase().includes(ttsVoiceSearch.toLowerCase()) || v.lang.toLowerCase().includes(ttsVoiceSearch.toLowerCase()))
                         .map(voice => (
                           <button
@@ -1297,7 +1434,74 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', justifyContent: 'flex-start', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '16px' }}>
+                    {/* Voice Sliders */}
+                    <div style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '12px',
+                      marginTop: '8px',
+                      borderTop: '1px solid rgba(255,255,255,0.05)',
+                      paddingTop: '12px'
+                    }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px', color: '#94a3b8' }}>
+                          <span>Speed / Rate ({ttsRate}x)</span>
+                        </div>
+                        <input 
+                          type="range" 
+                          min="0.5" 
+                          max="2.0" 
+                          step="0.1" 
+                          value={ttsRate}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            setTtsRate(val);
+                            localStorage.setItem('qwenos_tts_rate', val.toString());
+                          }}
+                          style={{ accentColor: '#8b5cf6', background: 'rgba(255,255,255,0.1)', height: '4px', borderRadius: '2px', outline: 'none', cursor: 'pointer' }}
+                        />
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px', color: '#94a3b8' }}>
+                          <span>Pitch ({ttsPitch})</span>
+                        </div>
+                        <input 
+                          type="range" 
+                          min="0.5" 
+                          max="2.0" 
+                          step="0.1" 
+                          value={ttsPitch}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            setTtsPitch(val);
+                            localStorage.setItem('qwenos_tts_pitch', val.toString());
+                          }}
+                          style={{ accentColor: '#8b5cf6', background: 'rgba(255,255,255,0.1)', height: '4px', borderRadius: '2px', outline: 'none', cursor: 'pointer' }}
+                        />
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px', color: '#94a3b8' }}>
+                          <span>Volume ({Math.round(ttsVolume * 100)}%)</span>
+                        </div>
+                        <input 
+                          type="range" 
+                          min="0.1" 
+                          max="1.0" 
+                          step="0.1" 
+                          value={ttsVolume}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            setTtsVolume(val);
+                            localStorage.setItem('qwenos_tts_volume', val.toString());
+                          }}
+                          style={{ accentColor: '#8b5cf6', background: 'rgba(255,255,255,0.1)', height: '4px', borderRadius: '2px', outline: 'none', cursor: 'pointer' }}
+                        />
+                      </div>
+                    </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-start', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '12px' }}>
                     <button
                       onClick={() => {
                         if (!('speechSynthesis' in window)) return;
@@ -1306,12 +1510,42 @@ export default function App() {
                         const voiceObj = availableVoices.find(v => v.name === selectedVoiceName)
                                       ?? availableVoices.find(v => v.lang.startsWith('en'));
                         if (!voiceObj) return;
-                        const utterance = new SpeechSynthesisUtterance(`Hello! I am ${voiceObj.name.split(' ').slice(1, 2).join(' ') || 'your'}, your desktop companion voice.`);
-                        utterance.voice = voiceObj;
-                        utterance.lang  = voiceObj.lang;
-                        console.log('[Settings Test] ✅ Testing voice:', voiceObj.name);
-                        window.speechSynthesis.speak(utterance);
+
+                        // Check if it's a cloud voice
+                        const isCloudVoice = !window.speechSynthesis.getVoices().some(v => v.name === voiceObj.name);
+                        const testText = `Hello! I am your desktop companion voice. Testing selection.`;
+
+                        if (isCloudVoice) {
+                          const voiceId = (voiceObj as any).shortName || voiceObj.voiceURI;
+                          const audioUrl = `http://localhost:3000/api/tts/speak?text=${encodeURIComponent(testText)}&voice=${encodeURIComponent(voiceId)}&rate=${ttsRate}&pitch=${ttsPitch}&volume=${ttsVolume}`;
+                          
+                          if ((window as any)._settingsTestAudio) {
+                            (window as any)._settingsTestAudio.pause();
+                          }
+                          
+                          const audio = new Audio(audioUrl);
+                          (window as any)._settingsTestAudio = audio;
+                          audio.play().catch(err => {
+                            console.warn('[Settings Test] Cloud playback failed:', err);
+                          });
+                          console.log('[Settings Test] ✅ Playing via Cloud Edge TTS:', voiceObj.name);
+                        } else {
+                          const nativeVoiceObj = window.speechSynthesis.getVoices().find(v => v.name === voiceObj.name);
+                          const utterance = new SpeechSynthesisUtterance(testText);
+                          if (nativeVoiceObj) {
+                            utterance.voice = nativeVoiceObj;
+                            utterance.lang  = nativeVoiceObj.lang;
+                          } else {
+                            utterance.lang = voiceObj.lang;
+                          }
+                          utterance.rate = ttsRate;
+                          utterance.pitch = ttsPitch;
+                          utterance.volume = ttsVolume;
+                          console.log('[Settings Test] ✅ Playing via Local TTS:', voiceObj.name);
+                          window.speechSynthesis.speak(utterance);
+                        }
                       }}
+
                       style={{
                         background: 'rgba(255, 255, 255, 0.05)',
                         border: '1px solid rgba(255, 255, 255, 0.1)',
@@ -1330,6 +1564,7 @@ export default function App() {
                       <span>▶</span> Test Selected Voice
                     </button>
                   </div>
+
 
                 </div>
               </div>
@@ -1449,6 +1684,7 @@ export default function App() {
         width={controller.pipWidth} 
         height={controller.pipHeight}
         isSpeaking={controller.isSpeaking}
+        onPipDocumentReady={(doc) => setPipDocument(doc)}
       >
         <VoiceCompanionBar
           state={controller.assistantState}
@@ -1465,6 +1701,8 @@ export default function App() {
           onSizeChange={controller.setPipSize}
           transitionMessage={controller.transitionMessage}
           shouldDisplayPanel={controller.shouldDisplayPanel}
+          speakUtterance={controller.speakUtterance}
+          pipDocument={pipDocument}
         />
       </PipPortal>
     </div>

@@ -24,6 +24,7 @@ export interface CompanionController {
   setResponseHtml: (html: string | null) => void;
   isProcessing: boolean;
   clearResponse: () => void;
+  speakUtterance: (text: string) => void;
 
   // PiP Size States
   pipWidth: number;
@@ -61,14 +62,21 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
 
   // Cache voices in a ref — loaded once on mount, refreshed on voiceschanged
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
+  const activeAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const spokenTextIndexRef = useRef<number>(0);
-  const speechVolumeIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const speechVolumeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Stable refs for values read inside effects that must NOT be deps
+  const responseTextRef = useRef(responseText);
+  const responseHtmlRef = useRef(responseHtml);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
     transcript,
@@ -77,18 +85,34 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
   } = useSpeechRecognition();
 
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const transitionTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isRequestingRef = useRef(false);
   const lastStartRef = useRef<number>(0);
 
+  // Keep stable refs in sync each render (no re-render cost)
+  responseTextRef.current = responseText;
+  responseHtmlRef.current = responseHtml;
+
   // Load voices into ref on mount — same pattern as MemeRenderer.tsx
   useEffect(() => {
-    const loadVoices = () => {
+    const loadVoices = async () => {
+      try {
+        const res = await fetch('http://localhost:3000/api/tts/voices');
+        if (!res.ok) throw new Error('API failure');
+        const cloudVoices = await res.json();
+        if (cloudVoices && cloudVoices.length > 0) {
+          voicesRef.current = cloudVoices;
+          console.log('[TTS Hook] Loaded cloud voices:', cloudVoices.length);
+          return;
+        }
+      } catch (err) {
+        console.warn('[TTS Hook] Failed to load cloud voices, falling back to browser voices:', err);
+      }
+
       const all = window.speechSynthesis.getVoices();
       if (all.length > 0) {
-        voicesRef.current = all;
-        console.log('[TTS Hook] Voices cached:', all.length, '| Online:', all.filter(v => v.name.includes('Online') || v.name.includes('Natural')).length);
+        const nonGoogle = all.filter(v => !v.name.toLowerCase().includes('google'));
+        voicesRef.current = nonGoogle.length > 0 ? nonGoogle : all;
+        console.log('[TTS Hook] Loaded local browser voices:', voicesRef.current.length);
       }
     };
     loadVoices();
@@ -111,6 +135,10 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
+    if (activeAudioRef.current) {
+      activeAudioRef.current.pause();
+      activeAudioRef.current = null;
+    }
     setIsTtsSpeaking(false);
     if (speechVolumeIntervalRef.current) {
       clearInterval(speechVolumeIntervalRef.current);
@@ -119,12 +147,26 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
     setVolume(0);
   };
 
+  // Throttled TTS volume — update state at most every 200ms to avoid render storms
+  const ttsVolUpdateRef = useRef(0);
   const simulateSpeechVolume = () => {
     if (speechVolumeIntervalRef.current) clearInterval(speechVolumeIntervalRef.current);
+    let keepAliveCounter = 0;
+    ttsVolUpdateRef.current = 0;
     speechVolumeIntervalRef.current = setInterval(() => {
       if ('speechSynthesis' in window && window.speechSynthesis.speaking) {
-        const vol = Math.random() * 50 + 20;
-        setVolume(vol);
+        const now = Date.now();
+        if (now - ttsVolUpdateRef.current >= 200) { // throttle to 5fps
+          ttsVolUpdateRef.current = now;
+          const vol = Math.random() * 50 + 20;
+          setVolume(vol);
+        }
+        // Chrome bug: speechSynthesis stops after ~15s — resume() every 10s keeps it alive
+        keepAliveCounter++;
+        if (keepAliveCounter % 100 === 0) { // every 100 * 100ms = 10s
+          window.speechSynthesis.pause();
+          window.speechSynthesis.resume();
+        }
       } else {
         setVolume(0);
         if (speechVolumeIntervalRef.current) {
@@ -153,8 +195,6 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
     if (!cleanSpeech) return;
 
     console.log(`[TTS] Speaking: "${cleanSpeech.substring(0, 60)}..."`);
-    const utterance = new SpeechSynthesisUtterance(cleanSpeech);
-
     // Use exact voice name stored in localStorage (user picked it from the full list)
     const voiceName = localStorage.getItem('qwenos_tts_voice') || '';
     const voices = getVoicesReady();
@@ -166,17 +206,70 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
                        ?? voices.find(v => v.lang.startsWith('en'))
                        ?? voices[0];
 
+    const savedRate = parseFloat(localStorage.getItem('qwenos_tts_rate') || '1.0');
+    const savedPitch = parseFloat(localStorage.getItem('qwenos_tts_pitch') || '1.0');
+    const savedVolume = parseFloat(localStorage.getItem('qwenos_tts_volume') || '1.0');
+
+    // Determine if the selected voice is a backend cloud voice
+    const isCloudVoice = !!(selectedVoice as any).shortName || 
+                         !window.speechSynthesis.getVoices().some(v => v.name === selectedVoice.name);
+
+    if (isCloudVoice) {
+      console.log('[TTS] Playing via Backend Edge Cloud TTS Engine:', selectedVoice.name);
+      if (activeAudioRef.current) {
+        activeAudioRef.current.pause();
+      }
+
+      const voiceId = (selectedVoice as any).shortName || selectedVoice.voiceURI;
+      const audioUrl = `http://localhost:3000/api/tts/speak?text=${encodeURIComponent(cleanSpeech)}&voice=${encodeURIComponent(voiceId)}&rate=${savedRate}&pitch=${savedPitch}&volume=${savedVolume}`;
+      
+      const audio = new Audio(audioUrl);
+      activeAudioRef.current = audio;
+
+      audio.onplay = () => {
+        setIsTtsSpeaking(true);
+        setAssistantState('processing');
+        simulateSpeechVolume();
+      };
+
+      audio.onended = () => {
+        setIsTtsSpeaking(false);
+        setVolume(0);
+        setAssistantState('idle');
+        activeAudioRef.current = null;
+      };
+
+      audio.onerror = (e) => {
+        console.warn('[Cloud TTS] Audio element error:', e);
+        setIsTtsSpeaking(false);
+        setVolume(0);
+        setAssistantState('idle');
+        activeAudioRef.current = null;
+      };
+
+      audio.play().catch(err => {
+        console.warn('[Cloud TTS] Playback start failed:', err);
+        setIsTtsSpeaking(false);
+        setVolume(0);
+        setAssistantState('idle');
+        activeAudioRef.current = null;
+      });
+      return;
+    }
+
+    // Fallback: Local Browser Speech Synthesis
+    const utterance = new SpeechSynthesisUtterance(cleanSpeech);
     if (selectedVoice) {
-      console.log('[TTS] ✅ Using voice:', selectedVoice.name);
+      console.log('[TTS] ✅ Using native voice:', selectedVoice.name);
       utterance.voice = selectedVoice;
       utterance.lang  = selectedVoice.lang;
     } else {
-      console.warn('[TTS] ⚠️ No voices available at all!');
+      console.warn('[TTS] ⚠️ No local voice available, using default en-US.');
       utterance.lang = 'en-US';
     }
-
-    utterance.rate  = 1.0;
-    utterance.pitch = 1.0;
+    utterance.rate  = savedRate;
+    utterance.pitch = savedPitch;
+    utterance.volume = savedVolume;
 
     utterance.onstart = () => {
       setIsTtsSpeaking(true);
@@ -201,6 +294,7 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
       }
     };
 
+    window.speechSynthesis.resume(); // Unblock Chrome's auto-pause when PiP window is focused
     window.speechSynthesis.speak(utterance);
   };
 
@@ -242,7 +336,7 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
     }
   };
 
-  // Attempt auto-connect to QwenOS MCP server on mount
+  // Attempt auto-connect to Qwen Memory OS MCP server on mount
   useEffect(() => {
     mcpClientService.connect('http://localhost:3000/sse').catch(() => {});
   }, []);
@@ -280,6 +374,8 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
         source.connect(analyser);
 
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        // Throttle setVolume to max 10fps (100ms) to prevent 60fps render storms
+        let lastVolUpdate = 0;
         const checkVolume = () => {
           if (!analyserRef.current) return;
           analyserRef.current.getByteFrequencyData(dataArray);
@@ -289,7 +385,11 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
           }
           const average = sum / dataArray.length;
           const volValue = Math.min(100, Math.max(0, (average / 128) * 100));
-          setVolume(volValue);
+          const now = performance.now();
+          if (now - lastVolUpdate >= 100) { // 10fps throttle
+            lastVolUpdate = now;
+            setVolume(volValue);
+          }
           animationFrameRef.current = requestAnimationFrame(checkVolume);
         };
         checkVolume();
@@ -533,7 +633,7 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
 
     } catch (err) {
       console.error('[Voice Ask] Error streaming response:', err);
-      const errorText = 'Failed to receive response from QwenOS server. Make sure node server.js is running.';
+      const errorText = 'Failed to receive response from Qwen Memory OS server. Make sure node server.js is running.';
       setResponseText(errorText);
       setResponseHtml(null);
       setAssistantState('idle');
@@ -573,8 +673,8 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
         transitionTimerRef.current = null;
       }
 
-      // Close previous response instantly!
-      if (responseText || responseHtml) {
+      // Close previous response instantly — read via refs to avoid being a dep!
+      if (responseTextRef.current || responseHtmlRef.current) {
         setResponseText('');
         setResponseHtml(null);
       }
@@ -615,7 +715,7 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
       }, 2000); // 2 seconds of silence triggers gap
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transcript, isPipOpen, isProcessing, responseText, responseHtml]);
+  }, [transcript, isPipOpen, isProcessing]); // ✅ responseText/responseHtml removed — read via refs
 
   const toggleListening = () => {
     stopSpeech();
@@ -665,6 +765,7 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
     setResponseHtml,
     isProcessing,
     clearResponse,
+    speakUtterance,
 
     // PiP Size States
     pipWidth,

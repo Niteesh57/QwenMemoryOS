@@ -13,11 +13,11 @@ const transports = {};
  * @returns {McpServer}
  */
 export const createMcpServer = () => {
-  const server = new McpServer({ name: "QwenOS-Server", version: "2.0.0" });
+  const server = new McpServer({ name: "Qwen-Memory-OS-Server", version: "2.0.0" });
 
   server.resource(
     "qwen-result",
-    new ResourceTemplate("ui://qwenos/ask_qwen_result/{id}", { list: undefined }),
+    new ResourceTemplate("ui://qwen-memory-os/ask_qwen_result/{id}", { list: undefined }),
     async (uri, { id }) => ({
       contents: [{
         uri: uri.href,
@@ -32,7 +32,7 @@ export const createMcpServer = () => {
       const resp = await openai.chat.completions.create({
         model: MODEL_NAME,
         messages: [
-          { role: "system", content: "You are QwenOS AI. Answer concisely." },
+          { role: "system", content: "You are Qwen Memory OS AI. Answer concisely." },
           { role: "user", content: prompt },
         ],
       });
@@ -41,7 +41,7 @@ export const createMcpServer = () => {
       resultStorage.set(id, renderHtmlResult(answer));
       return {
         content: [{ type: "text", text: answer }],
-        _meta: { ui: { resourceUri: `ui://qwenos/ask_qwen_result/${id}` } },
+        _meta: { ui: { resourceUri: `ui://qwen-memory-os/ask_qwen_result/${id}` } },
       };
     } catch (err) {
       return { content: [{ type: "text", text: `Error: ${err.message}` }] };

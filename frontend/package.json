@@ -1,5 +1,5 @@
 {
-  "name": "test-qwen",
+  "name": "qwen-memory-os-frontend",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -23,13 +23,17 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "fix-webm-duration": "^1.0.6",
     "html-to-image": "^1.11.13",
+    "lucide-react": "^1.21.0",
+    "marked": "^18.0.5",
     "motion": "^12.42.0",
     "openai": "^6.45.0",
     "postprocessing": "^6.39.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-speech-recognition": "^4.0.1",
+    "react-text-to-speech": "^5.1.10",
     "three": "^0.184.0"
   },
   "devDependencies": {
