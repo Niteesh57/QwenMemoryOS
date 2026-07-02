@@ -60,10 +60,11 @@ export async function handleMemoryStatus(req, res) {
     // Automatically execute tier aging in background when checking status
     runTierAging().catch(() => {});
 
+    const deviceId = req.deviceId || 'DEV-DEFAULT';
     const [connection, stats, states] = await Promise.all([
       testConnection(),
-      getMemoryStats(),
-      retrieveCurrentStates(),
+      getMemoryStats(deviceId),
+      retrieveCurrentStates(deviceId),
     ]);
     res.json({
       agentRunning,
@@ -106,8 +107,9 @@ export async function handleAgentChunk(req, res) {
       mp4File = { buffer: rawBuffer, filename: originalName.replace(/\.[^/.]+$/, '') + '.mp4', contentType: 'video/mp4' };
     }
 
-    // ── 2. Upload to Supabase in MP4 format ────────────────────────────
-    const videoUrl = await uploadVideoChunk(mp4File.buffer, mp4File.filename, mp4File.contentType);
+    const deviceId = req.deviceId || 'DEV-DEFAULT';
+    // ── 2. Upload to Storage (Supabase or Local Static) ────────────────
+    const videoUrl = await uploadVideoChunk(mp4File.buffer, mp4File.filename, mp4File.contentType, deviceId);
     addToLog({ type: 'uploaded', url: videoUrl });
 
     // ── 3. Analyze with Qwen3-VL-Flash + Store in Neo4j ───────────────
@@ -117,13 +119,14 @@ export async function handleAgentChunk(req, res) {
         durationMinutes,
         sessionId,
         chunkTimestamp,
+        deviceId,
       });
     } finally {
-      // Always delete video from Supabase after analysis (success or error)
+      // Always delete video from storage after analysis (success or error)
       if (mp4File?.filename) {
-        deleteVideoChunk(mp4File.filename)
-          .then(() => console.log(`[Supabase] Deleted chunk after analysis → ${mp4File.filename}`))
-          .catch(delErr => console.warn('[Supabase] Failed to delete chunk:', delErr.message));
+        deleteVideoChunk(mp4File.filename, deviceId)
+          .then(() => console.log(`[Storage] Deleted chunk after analysis → ${mp4File.filename}`))
+          .catch(delErr => console.warn('[Storage] Failed to delete chunk:', delErr.message));
       }
     }
 
@@ -178,12 +181,13 @@ export async function handleMemoryIngest(req, res) {
     if (!type || !['event', 'state'].includes(type)) {
       return res.status(400).json({ error: 'body.type must be "event" or "state"' });
     }
+    const deviceId = req.deviceId || 'DEV-DEFAULT';
     let stored;
     if (type === 'event') {
-      stored = await ingestEvent(data);
+      stored = await ingestEvent(data, deviceId);
       addToLog({ type: 'event', action: stored.action, object: stored.object, tier: stored.tier });
     } else {
-      stored = await ingestState(data);
+      stored = await ingestState(data, deviceId);
       addToLog({ type: 'state', attribute: stored.attribute, value: stored.value });
     }
     res.json({ ok: true, stored });
@@ -199,9 +203,10 @@ export async function handleMemoryQuery(req, res) {
     const { query, topic_tags = [], top_k = 10 } = req.body;
     if (!query) return res.status(400).json({ error: 'body.query is required' });
 
-    const candidates = await retrieveCandidates(query, topic_tags, 40);
+    const deviceId = req.deviceId || 'DEV-DEFAULT';
+    const candidates = await retrieveCandidates(query, topic_tags, 40, deviceId);
     const filtered = lateFilter(candidates, query, top_k);
-    const currentStates = await retrieveCurrentStates();
+    const currentStates = await retrieveCurrentStates(deviceId);
 
     res.json({ query, candidateCount: candidates.length, filteredCount: filtered.length, events: filtered, currentStates });
   } catch (err) {
@@ -214,7 +219,8 @@ export async function handleMemoryQuery(req, res) {
 export async function handleMemoryTimeline(req, res) {
   try {
     const days = parseInt(req.query.days) || 7;
-    const events = await getTimelineEvents(days);
+    const deviceId = req.deviceId || 'DEV-DEFAULT';
+    const events = await getTimelineEvents(days, deviceId);
     res.json({ events, count: events.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -225,7 +231,8 @@ export async function handleMemoryTimeline(req, res) {
 
 export async function handleMemoryStates(req, res) {
   try {
-    const [current, past] = await Promise.all([retrieveCurrentStates(), retrievePastStates()]);
+    const deviceId = req.deviceId || 'DEV-DEFAULT';
+    const [current, past] = await Promise.all([retrieveCurrentStates(deviceId), retrievePastStates(null, deviceId)]);
     res.json({ current, past });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -4,6 +4,8 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { Flame, Sun, Snowflake, Zap, Video, Calendar, Activity, BookOpen, Upload, CheckCircle2, AlertCircle, Eye, Package, Clock } from 'lucide-react';
+import { getDeviceHeaders } from '../utils/deviceIdentity';
 
 const API = 'http://localhost:3000';
 const DEFAULT_CHUNK_MINUTES = 10;
@@ -55,18 +57,19 @@ interface LogEntry {
 // ─── Tier badge ───────────────────────────────────────────────────────────────
 
 const TierBadge = ({ tier }: { tier: string }) => {
-  const map: Record<string, { label: string; color: string; bg: string }> = {
-    hot:  { label: '🔥 HOT',  color: '#fb923c', bg: 'rgba(251,146,60,0.12)' },
-    warm: { label: '🌤 WARM', color: '#facc15', bg: 'rgba(250,204,21,0.12)' },
-    cold: { label: '🧊 COLD', color: '#60a5fa', bg: 'rgba(96,165,250,0.12)' },
+  const map: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
+    hot:  { label: 'HOT',  color: '#fb923c', bg: 'rgba(251,146,60,0.12)', icon: <Flame size={10} style={{ marginRight: 3 }} /> },
+    warm: { label: 'WARM', color: '#facc15', bg: 'rgba(250,204,21,0.12)', icon: <Sun size={10} style={{ marginRight: 3 }} /> },
+    cold: { label: 'COLD', color: '#60a5fa', bg: 'rgba(96,165,250,0.12)', icon: <Snowflake size={10} style={{ marginRight: 3 }} /> },
   };
   const t = map[tier] ?? map.cold;
   return (
     <span style={{
+      display: 'inline-flex', alignItems: 'center',
       fontSize: '9px', fontWeight: 700, color: t.color,
       background: t.bg, border: `1px solid ${t.color}40`,
       borderRadius: '4px', padding: '1px 5px', letterSpacing: '0.04em'
-    }}>{t.label}</span>
+    }}>{t.icon}{t.label}</span>
   );
 };
 
@@ -95,7 +98,7 @@ const fmtDuration = (secs: number) => `${Math.floor(secs / 60).toString().padSta
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export function MemoryBookManager() {
-  const [activeTab, setActiveTab] = useState<'capture' | 'book' | 'states' | 'query'>('capture');
+  const [activeTab, setActiveTab] = useState<'capture' | 'book' | 'states'>('capture');
 
   // ── Neo4j / backend state ──────────────────────────────────────────────────
   const [neo4jOk, setNeo4jOk] = useState(false);
@@ -123,11 +126,6 @@ export function MemoryBookManager() {
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sessionId = useRef(`session_${Date.now()}`);
 
-  // ── Query state ────────────────────────────────────────────────────────────
-  const [queryText, setQueryText] = useState('');
-  const [queryResult, setQueryResult] = useState<{ answer?: string; candidateCount: number; filteredCount: number; events: MemoryEvent[] } | null>(null);
-  const [querying, setQuerying] = useState(false);
-
   // ── Ingest state ───────────────────────────────────────────────────────────
   const [ingestType, setIngestType] = useState<'event' | 'state'>('event');
   const [ingestForm, setIngestForm] = useState({ actor: 'User', action: 'SAID', object: '', raw_content: '', attribute: 'WORKS_AT', value: '' });
@@ -137,7 +135,7 @@ export function MemoryBookManager() {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const r = await fetch(`${API}/api/memory/status`);
+      const r = await fetch(`${API}/api/memory/status`, { headers: getDeviceHeaders() });
       const d = await r.json();
       setNeo4jOk(d.neo4j?.connected ?? false);
       setStats(d.stats ?? stats);
@@ -149,7 +147,7 @@ export function MemoryBookManager() {
 
   const fetchTimeline = useCallback(async () => {
     try {
-      const r = await fetch(`${API}/api/memory/timeline?days=7`);
+      const r = await fetch(`${API}/api/memory/timeline?days=7`, { headers: getDeviceHeaders() });
       const d = await r.json();
       setTimeline(d.events ?? []);
     } catch (_) {}
@@ -157,7 +155,7 @@ export function MemoryBookManager() {
 
   const fetchStates = useCallback(async () => {
     try {
-      const r = await fetch(`${API}/api/memory/states`);
+      const r = await fetch(`${API}/api/memory/states`, { headers: getDeviceHeaders() });
       const d = await r.json();
       setCurrentStates(d.current ?? []);
       setPastStates(d.past ?? []);
@@ -199,7 +197,7 @@ export function MemoryBookManager() {
       setUploadStatus('analyzing');
       setUploadMsg('Packaging into MP4 & uploading to Supabase. Qwen3-VL is analyzing visual context & events…');
 
-      const r = await fetch(`${API}/api/memory/agent/chunk`, { method: 'POST', body: formData });
+      const r = await fetch(`${API}/api/memory/agent/chunk`, { method: 'POST', headers: getDeviceHeaders(), body: formData });
       const d = await r.json();
 
       if (d.ok) {
@@ -304,29 +302,13 @@ export function MemoryBookManager() {
     await stopCapture();
   };
 
-  // ─── Manual query ──────────────────────────────────────────────────────────
-
-  const runQuery = async () => {
-    if (!queryText.trim()) return;
-    setQuerying(true);
-    setQueryResult(null);
-    try {
-      const r = await fetch(`${API}/api/memory/query`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: queryText }),
-      });
-      setQueryResult(await r.json());
-    } catch (_) {}
-    setQuerying(false);
-  };
-
   const runIngest = async () => {
     setIngestResult(null);
     const body = ingestType === 'event'
       ? { type: 'event', actor: ingestForm.actor, action: ingestForm.action, object: ingestForm.object, raw_content: ingestForm.raw_content || `${ingestForm.actor} ${ingestForm.action} ${ingestForm.object}`, source: 'manual', topic_tags: [] }
       : { type: 'state', entity_name: 'User', attribute: ingestForm.attribute, value: ingestForm.value };
     try {
-      const r = await fetch(`${API}/api/memory/ingest`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await fetch(`${API}/api/memory/ingest`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...getDeviceHeaders() }, body: JSON.stringify(body) });
       const d = await r.json();
       setIngestResult(d.ok ? '✓ Stored' : '✗ ' + d.error);
       await fetchStatus();
@@ -343,15 +325,11 @@ export function MemoryBookManager() {
     tab: (a: boolean) => ({ padding: '6px 12px', fontSize: '11px', fontWeight: 600, border: 'none', borderRadius: '6px 6px 0 0', cursor: 'pointer', background: a ? '#1e1d2e' : 'transparent', color: a ? '#c084fc' : '#64748b', borderBottom: a ? '2px solid #c084fc' : '2px solid transparent', transition: 'all 0.15s' }),
     body: { flex: 1, overflowY: 'auto' as const, padding: '14px 16px', display: 'flex', flexDirection: 'column' as const, gap: '10px' },
     card: (color = 'rgba(255,255,255,0.04)') => ({ background: color, border: '1px solid rgba(255,255,255,0.07)', borderRadius: '10px', padding: '12px 14px' }),
-    statRow: { display: 'flex', gap: '6px' },
-    statCard: (c: string) => ({ flex: 1, background: `${c}10`, border: `1px solid ${c}30`, borderRadius: '8px', padding: '8px', textAlign: 'center' as const }),
-    statNum: { fontSize: '18px', fontWeight: 800 },
-    statLabel: { fontSize: '8.5px', color: '#64748b', marginTop: '1px' },
     input: { flex: 1, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', color: '#e2e8f0', padding: '7px 11px', fontSize: '12px', outline: 'none' },
     btn: (r: string, g: string, b: string) => ({ padding: '8px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 700, background: `rgba(${r},${g},${b},0.18)`, color: `rgb(${r},${g},${b})`, boxShadow: `0 0 0 1px rgba(${r},${g},${b},0.3)` }),
     label: { fontSize: '9px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' as const, letterSpacing: '0.06em' },
     eventRow: { padding: '8px 10px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)', background: 'rgba(255,255,255,0.02)', display: 'flex', flexDirection: 'column' as const, gap: '4px' },
-    select: { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#e2e8f0', padding: '5px 8px', fontSize: '11px' },
+    select: { background: '#1e1d2e', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '6px', color: '#f8fafc', padding: '5px 8px', fontSize: '11px', colorScheme: 'dark' as const },
   };
 
   // Progress bar color for countdown
@@ -367,22 +345,28 @@ export function MemoryBookManager() {
       <div style={S.header}>
         <div style={S.topRow}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: '13px', fontWeight: 700, color: '#c084fc' }}>📖 Memory Book</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 700, color: '#c084fc' }}>
+              <BookOpen size={16} /> Memory Book
+            </span>
             {isCapturing && <LiveDot />}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: '10px', color: '#94a3b8' }}>
-              <span style={{ display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%', background: neo4jOk ? '#34d399' : '#f87171', marginRight: '4px', verticalAlign: 'middle' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: '10px', color: '#94a3b8' }}>
+              <span style={{ display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%', background: neo4jOk ? '#34d399' : '#f87171', marginRight: '5px' }} />
               {neo4jOk ? 'Neo4j' : 'Offline'}
-            </span>
-            <span style={{ fontSize: '10px', color: '#64748b' }}>
-              🔥{stats.hot} 🌤{stats.warm} 🧊{stats.cold} ⚡{stats.activeStates}
             </span>
           </div>
         </div>
         <div style={S.tabs}>
-          {([['capture', '🎥 Capture'], ['book', '📅 Timeline'], ['states', '⚡ States'], ['query', '🔍 Query']] as const).map(([id, label]) => (
-            <button key={id} style={S.tab(activeTab === id)} onClick={() => setActiveTab(id)}>{label}</button>
+          {([
+            ['capture', 'Capture', <Video size={13} key="v" />],
+            ['book', 'Timeline', <Calendar size={13} key="c" />],
+            ['states', 'States', <Activity size={13} key="a" />]
+          ] as const).map(([id, label, icon]) => (
+            <button key={id} style={{ ...S.tab(activeTab === id), display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={() => setActiveTab(id as any)}>
+              {icon}
+              {label}
+            </button>
           ))}
         </div>
       </div>
@@ -442,33 +426,33 @@ export function MemoryBookManager() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto' }}>
                       <span style={{ fontSize: '10px', color: '#64748b' }}>Interval:</span>
                       <select style={S.select} value={chunkMinutes} onChange={e => setChunkMinutes(Number(e.target.value))}>
-                        <option value={1}>1 min (demo)</option>
-                        <option value={5}>5 min</option>
-                        <option value={10}>10 min</option>
-                        <option value={15}>15 min</option>
-                        <option value={30}>30 min</option>
+                        <option value={1} style={{ background: '#1e1d2e', color: '#f8fafc' }}>1 min (demo)</option>
+                        <option value={5} style={{ background: '#1e1d2e', color: '#f8fafc' }}>5 min</option>
+                        <option value={10} style={{ background: '#1e1d2e', color: '#f8fafc' }}>10 min</option>
+                        <option value={15} style={{ background: '#1e1d2e', color: '#f8fafc' }}>15 min</option>
+                        <option value={30} style={{ background: '#1e1d2e', color: '#f8fafc' }}>30 min</option>
                       </select>
                     </div>
                   </>
                 ) : (
                   <>
-                    <button style={S.btn('239', '68', '68')} onClick={handleStopClick}>
-                      ⏹ Stop & Save
+                    <button style={{ ...S.btn('239', '68', '68'), display: 'inline-flex', alignItems: 'center', gap: '5px' }} onClick={handleStopClick}>
+                      Stop & Save
                     </button>
                     <button
-                      style={{ ...S.btn('167', '139', '250'), opacity: uploadStatus === 'uploading' || uploadStatus === 'analyzing' ? 0.5 : 1 }}
+                      style={{ ...S.btn('167', '139', '250'), display: 'inline-flex', alignItems: 'center', gap: '5px', opacity: uploadStatus === 'uploading' || uploadStatus === 'analyzing' ? 0.5 : 1 }}
                       onClick={sendChunk}
                       disabled={uploadStatus === 'uploading' || uploadStatus === 'analyzing'}
                     >
-                      ↑ Send Now
+                      <Upload size={11} /> Send Now
                     </button>
                   </>
                 )}
               </div>
 
               {captureError && (
-                <div style={{ marginTop: '10px', fontSize: '10px', color: '#f87171', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '6px', padding: '8px 10px' }}>
-                  ✗ {captureError}
+                <div style={{ marginTop: '10px', fontSize: '10px', color: '#f87171', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '6px', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <AlertCircle size={13} /> {captureError}
                 </div>
               )}
             </div>
@@ -482,8 +466,8 @@ export function MemoryBookManager() {
                 color: uploadStatus === 'done' ? '#34d399' : uploadStatus === 'error' ? '#f87171' : '#c084fc',
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: '16px' }}>
-                    {uploadStatus === 'uploading' ? '⬆️' : uploadStatus === 'analyzing' ? '🤖' : uploadStatus === 'done' ? '✅' : '❌'}
+                  <span>
+                    {uploadStatus === 'uploading' ? <Upload size={16} /> : uploadStatus === 'analyzing' ? <Activity size={16} /> : uploadStatus === 'done' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
                   </span>
                   <div>
                     <div style={{ fontWeight: 700 }}>
@@ -502,17 +486,21 @@ export function MemoryBookManager() {
             {/* Latest Qwen analysis */}
             {latestAnalysis && (
               <div style={{ ...S.card('rgba(167,139,250,0.04)'), border: '1px solid rgba(167,139,250,0.2)' }}>
-                <div style={{ ...S.label, marginBottom: '8px', color: '#a78bfa' }}>🤖 Latest Qwen3-VL-Flash Analysis (MP4 Stream)</div>
+                <div style={{ ...S.label, marginBottom: '8px', color: '#a78bfa', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <Activity size={13} /> Latest Qwen3-VL-Flash Analysis (MP4 Stream)
+                </div>
                 {latestAnalysis.visual_description && (
                   <div style={{ marginBottom: '10px', background: 'rgba(0,0,0,0.25)', padding: '10px', borderRadius: '8px', border: '1px solid rgba(167,139,250,0.15)' }}>
-                    <div style={{ fontSize: '9.5px', fontWeight: 800, color: '#c084fc', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.05em' }}>👁️ What LLM Sees on Screen (Visual Context)</div>
+                    <div style={{ fontSize: '9.5px', fontWeight: 800, color: '#c084fc', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <Eye size={12} /> What LLM Sees on Screen (Visual Context)
+                    </div>
                     <div style={{ fontSize: '11px', color: '#e2e8f0', lineHeight: '1.5' }}>{latestAnalysis.visual_description}</div>
                   </div>
                 )}
                 <div style={{ display: 'flex', gap: '12px', fontSize: '10px', color: '#64748b' }}>
-                  <span>📦 {latestAnalysis.eventCount ?? 0} events stored</span>
-                  <span>⚡ {latestAnalysis.stateCount ?? 0} states updated</span>
-                  <span>🕐 {latestAnalysis.analyzedAt ? fmtTime(latestAnalysis.analyzedAt) : ''}</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><Package size={11} /> {latestAnalysis.eventCount ?? 0} events stored</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><Zap size={11} /> {latestAnalysis.stateCount ?? 0} states updated</span>
+                  {latestAnalysis.analyzedAt && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><Clock size={11} /> {fmtTime(latestAnalysis.analyzedAt)}</span>}
                 </div>
               </div>
             )}
@@ -544,8 +532,8 @@ export function MemoryBookManager() {
               <div style={{ ...S.label, marginBottom: '8px' }}>Manual Ingest</div>
               <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
                 <select style={S.select} value={ingestType} onChange={e => setIngestType(e.target.value as 'event' | 'state')}>
-                  <option value="event">Event</option>
-                  <option value="state">State</option>
+                  <option value="event" style={{ background: '#1e1d2e', color: '#f8fafc' }}>Event</option>
+                  <option value="state" style={{ background: '#1e1d2e', color: '#f8fafc' }}>State</option>
                 </select>
               </div>
               {ingestType === 'event' ? (
@@ -568,7 +556,9 @@ export function MemoryBookManager() {
                 </div>
               )}
               <div style={{ display: 'flex', gap: '8px', marginTop: '8px', alignItems: 'center' }}>
-                <button style={S.btn('167', '139', '250')} onClick={runIngest}>↑ Ingest</button>
+                <button style={{ ...S.btn('167', '139', '250'), display: 'inline-flex', alignItems: 'center', gap: '5px' }} onClick={runIngest}>
+                  <Upload size={11} /> Ingest
+                </button>
                 {ingestResult && <span style={{ fontSize: '10px', color: ingestResult.startsWith('✓') ? '#34d399' : '#f87171' }}>{ingestResult}</span>}
               </div>
             </div>
@@ -578,15 +568,6 @@ export function MemoryBookManager() {
         {/* ═══ TAB: Timeline ══════════════════════════════════════════════ */}
         {activeTab === 'book' && (
           <>
-            <div style={S.statRow}>
-              {[['#fb923c', stats.hot, '🔥 HOT'], ['#facc15', stats.warm, '🌤 WARM'], ['#60a5fa', stats.cold, '🧊 COLD'], ['#a78bfa', stats.activeStates, '⚡ STATES']].map(([c, n, l]) => (
-                <div key={l as string} style={S.statCard(c as string)}>
-                  <div style={{ ...S.statNum, color: c as string }}>{n as number}</div>
-                  <div style={S.statLabel}>{l as string}</div>
-                </div>
-              ))}
-            </div>
-
             <div style={S.label}>Event Timeline (Last 7 Days)</div>
             {timeline.length === 0 ? (
               <div style={{ color: '#475569', textAlign: 'center', padding: '24px', fontSize: '11px' }}>No events yet. Start the capture agent.</div>
@@ -623,7 +604,9 @@ export function MemoryBookManager() {
                 <div key={s.id} style={{ ...S.eventRow, border: '1px solid rgba(167,139,250,0.2)', background: 'rgba(167,139,250,0.04)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span style={{ fontWeight: 700, color: '#c084fc' }}>{s.attribute}</span>
-                    <span style={{ fontSize: '9px', background: 'rgba(52,211,153,0.12)', color: '#34d399', borderRadius: '4px', padding: '1px 6px', fontWeight: 700 }}>⚡ PRESENT</span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: '9px', background: 'rgba(52,211,153,0.12)', color: '#34d399', borderRadius: '4px', padding: '1px 6px', fontWeight: 700 }}>
+                      <Zap size={10} style={{ marginRight: 3 }} /> PRESENT
+                    </span>
                   </div>
                   <div style={{ color: '#e2e8f0', fontWeight: 600 }}>{s.value}</div>
                   <div style={{ color: '#475569', fontSize: '10px' }}>Since {fmtDate(s.valid_from)} {fmtTime(s.valid_from)}</div>
@@ -645,53 +628,6 @@ export function MemoryBookManager() {
                 </div>
               ))
             }
-          </>
-        )}
-
-        {/* ═══ TAB: Query ═════════════════════════════════════════════════ */}
-        {activeTab === 'query' && (
-          <>
-            <div style={S.label}>Retrieval Sandbox — MemTree (HOT → WARM → COLD) + Late Filter</div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <input style={S.input} placeholder='Ask anything: "Did I open Docker?" or "What was my project?"' value={queryText} onChange={e => setQueryText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') runQuery(); }} />
-              <button style={S.btn('167', '139', '250')} onClick={runQuery} disabled={querying}>{querying ? '…' : 'Search'}</button>
-            </div>
-
-            {queryResult && (
-              <>
-                {queryResult.answer && (
-                  <div style={{ margin: '8px 0', background: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.3)', borderRadius: '8px', padding: '12px' }}>
-                    <div style={{ fontSize: '10px', fontWeight: 700, color: '#c084fc', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>✨ AI Memory Synthesis (Stage 4)</div>
-                    <div style={{ fontSize: '12px', color: '#f8fafc', lineHeight: '1.5' }}>{queryResult.answer}</div>
-                  </div>
-                )}
-
-                <div style={{ display: 'flex', gap: '8px', fontSize: '10px', color: '#64748b', alignItems: 'center', padding: '4px 0' }}>
-                  <span style={{ fontWeight: 700, color: '#94a3b8' }}>Stage 2 MemTree:</span>
-                  <span style={{ color: '#fb923c' }}>{queryResult.candidateCount} candidates</span>
-                  <span>→</span>
-                  <span style={{ fontWeight: 700, color: '#94a3b8' }}>Stage 3 Late Filter:</span>
-                  <span style={{ color: '#34d399' }}>{queryResult.filteredCount} kept</span>
-                </div>
-
-                {queryResult.events.length === 0
-                  ? <div style={{ color: '#475569', textAlign: 'center', padding: '16px', fontSize: '11px' }}>No relevant events found.</div>
-                  : queryResult.events.map(ev => (
-                    <div key={ev.id} style={S.eventRow}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <span style={{ fontWeight: 700, color: '#cbd5e1' }}>{ev.actor} · {ev.action}</span>
-                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                          <TierBadge tier={ev.tier} />
-                          <span style={{ fontSize: '9px', color: '#64748b' }}>×{ev.access_count}</span>
-                        </div>
-                      </div>
-                      <div style={{ color: '#94a3b8' }}>{ev.object}</div>
-                      <div style={{ color: '#64748b', fontSize: '10px', fontStyle: 'italic' }}>{ev.raw_content?.slice(0, 150)}</div>
-                    </div>
-                  ))
-                }
-              </>
-            )}
           </>
         )}
 

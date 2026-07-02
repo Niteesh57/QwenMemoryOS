@@ -10,6 +10,7 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import { getSession } from './neo4jService.js';
+import { openai, MODEL_NAME } from '../models/clients.js';
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
 
@@ -30,7 +31,7 @@ const now = () => new Date().toISOString();
  * @param {string[]} event.topic_tags
  * @param {object}  event.video_ref - { video_id, timestamp_seconds }
  */
-export async function ingestEvent(event) {
+export async function ingestEvent(event, deviceId = 'DEV-DEFAULT') {
   const session = getSession();
   const id = uuidv4();
   const timestamp = event.timestamp || now();
@@ -40,6 +41,7 @@ export async function ingestEvent(event) {
       `CREATE (e:Event:Hot {
         id:           $id,
         timestamp:    $timestamp,
+        deviceId:     $deviceId,
         actor:        $actor,
         action:       $action,
         object:       $object,
@@ -54,6 +56,7 @@ export async function ingestEvent(event) {
       {
         id,
         timestamp,
+        deviceId,
         actor: event.actor || 'User',
         action: event.action || 'ACTION',
         object: event.object || '',
@@ -82,7 +85,7 @@ export async function ingestEvent(event) {
  * @param {string} state.attribute    - "WORKS_AT" | "WORKS_ON" | "USES_EDITOR"
  * @param {string} state.value        - "Company A" | "VS Code" | etc.
  */
-export async function ingestState(state) {
+export async function ingestState(state, deviceId = 'DEV-DEFAULT') {
   const session = getSession();
   const newId = uuidv4();
   const timestamp = now();
@@ -91,8 +94,9 @@ export async function ingestState(state) {
     // 1. Check for an existing present=true state for this attribute
     const existing = await session.run(
       `MATCH (s:State {attribute: $attribute, present: true})
+       WHERE s.deviceId = $deviceId OR s.deviceId IS NULL
        RETURN s`,
-      { attribute: state.attribute }
+      { attribute: state.attribute, deviceId }
     );
 
     if (existing.records.length > 0) {
@@ -115,16 +119,17 @@ export async function ingestState(state) {
 
     // 2. Ensure the Entity node exists (MERGE)
     await session.run(
-      `MERGE (n:Entity {name: $name})
+      `MERGE (n:Entity {name: $name, deviceId: $deviceId})
        ON CREATE SET n.id = $entity_id, n.type = 'Person'`,
-      { name: state.entity_name || 'User', entity_id: uuidv4() }
+      { name: state.entity_name || 'User', deviceId, entity_id: uuidv4() }
     );
 
     // 3. Create new present=true State
     const result = await session.run(
-      `MATCH (n:Entity {name: $entity_name})
+      `MATCH (n:Entity {name: $entity_name, deviceId: $deviceId})
        CREATE (s:State {
          id:         $id,
+         deviceId:   $deviceId,
          attribute:  $attribute,
          value:      $value,
          present:    true,
@@ -136,6 +141,7 @@ export async function ingestState(state) {
       {
         entity_name: state.entity_name || 'User',
         id: newId,
+        deviceId,
         attribute: state.attribute,
         value: state.value,
         timestamp,
@@ -162,7 +168,7 @@ export async function ingestState(state) {
  * @param {number} limit - Max candidates to return (default 30)
  * @returns {object[]} Array of Event node properties
  */
-export async function retrieveCandidates(queryText, topicTags = [], limit = 30) {
+export async function retrieveCandidates(queryText, topicTags = [], limit = 30, deviceId = 'DEV-DEFAULT') {
   const session = getSession();
   const accessedNow = now();
 
@@ -180,18 +186,21 @@ export async function retrieveCandidates(queryText, topicTags = [], limit = 30) 
     for (const tier of tierOrder) {
       const result = await session.run(
         `MATCH (e:Event {tier: $tier})
-         WHERE any(kw IN $keywords WHERE
-           toLower(e.raw_content) CONTAINS kw OR
-           toLower(e.action) CONTAINS kw OR
-           toLower(e.object) CONTAINS kw OR
-           toLower(e.actor) CONTAINS kw
+         WHERE (e.deviceId = $deviceId OR e.deviceId IS NULL) AND (
+           any(kw IN $keywords WHERE
+             toLower(e.raw_content) CONTAINS kw OR
+             toLower(e.action) CONTAINS kw OR
+             toLower(e.object) CONTAINS kw OR
+             toLower(e.actor) CONTAINS kw
+           )
+           OR size($topicTags) > 0 AND any(t IN $topicTags WHERE t IN e.topic_tags)
          )
-         OR size($topicTags) > 0 AND any(t IN $topicTags WHERE t IN e.topic_tags)
          RETURN e
          ORDER BY e.timestamp DESC
          LIMIT $limit`,
         {
           tier,
+          deviceId,
           keywords,
           topicTags,
           limit: neo4jInt(limit),
@@ -248,13 +257,15 @@ export async function retrieveCandidates(queryText, topicTags = [], limit = 30) 
 /**
  * Retrieve current active States (present=true).
  */
-export async function retrieveCurrentStates() {
+export async function retrieveCurrentStates(deviceId = 'DEV-DEFAULT') {
   const session = getSession();
   try {
     const result = await session.run(
       `MATCH (n:Entity)-[:HAS_STATE]->(s:State {present: true})
+       WHERE s.deviceId = $deviceId OR s.deviceId IS NULL
        RETURN n.name AS entity, s
-       ORDER BY s.attribute`
+       ORDER BY s.attribute`,
+      { deviceId }
     );
     return result.records.map((r) => ({
       entity: r.get('entity'),
@@ -268,15 +279,15 @@ export async function retrieveCurrentStates() {
 /**
  * Retrieve historical States (present=false).
  */
-export async function retrievePastStates(attribute = null) {
+export async function retrievePastStates(attribute = null, deviceId = 'DEV-DEFAULT') {
   const session = getSession();
   try {
     const result = await session.run(
       `MATCH (n:Entity)-[:HAS_STATE]->(s:State {present: false})
-       WHERE $attribute IS NULL OR s.attribute = $attribute
+       WHERE (s.deviceId = $deviceId OR s.deviceId IS NULL) AND ($attribute IS NULL OR s.attribute = $attribute)
        RETURN n.name AS entity, s
        ORDER BY s.valid_from DESC`,
-      { attribute }
+      { attribute, deviceId }
     );
     return result.records.map((r) => ({
       entity: r.get('entity'),
@@ -393,16 +404,17 @@ export async function runTierAging() {
 /**
  * Returns a snapshot of the current memory graph statistics.
  */
-export async function getMemoryStats() {
+export async function getMemoryStats(deviceId = 'DEV-DEFAULT') {
   const session = getSession();
   try {
     const result = await session.run(
-      `MATCH (hot:Event:Hot) WITH count(hot) AS hotCount
-       MATCH (warm:Event:Warm) WITH hotCount, count(warm) AS warmCount
-       MATCH (cold:Event:Cold) WITH hotCount, warmCount, count(cold) AS coldCount
-       MATCH (s:State {present: true}) WITH hotCount, warmCount, coldCount, count(s) AS activeStates
-       MATCH (s2:State {present: false}) WITH hotCount, warmCount, coldCount, activeStates, count(s2) AS pastStates
-       RETURN hotCount, warmCount, coldCount, activeStates, pastStates`
+      `MATCH (hot:Event:Hot) WHERE hot.deviceId = $deviceId OR hot.deviceId IS NULL WITH count(hot) AS hotCount
+       MATCH (warm:Event:Warm) WHERE warm.deviceId = $deviceId OR warm.deviceId IS NULL WITH hotCount, count(warm) AS warmCount
+       MATCH (cold:Event:Cold) WHERE cold.deviceId = $deviceId OR cold.deviceId IS NULL WITH hotCount, warmCount, count(cold) AS coldCount
+       MATCH (s:State {present: true}) WHERE s.deviceId = $deviceId OR s.deviceId IS NULL WITH hotCount, warmCount, coldCount, count(s) AS activeStates
+       MATCH (s2:State {present: false}) WHERE s2.deviceId = $deviceId OR s2.deviceId IS NULL WITH hotCount, warmCount, coldCount, activeStates, count(s2) AS pastStates
+       RETURN hotCount, warmCount, coldCount, activeStates, pastStates`,
+      { deviceId }
     );
 
     if (result.records.length === 0) {
@@ -419,21 +431,21 @@ export async function getMemoryStats() {
     };
   } catch (err) {
     // Fallback if multiple MATCH patterns cause issues on Aura Free
-    return getMemoryStatsFallback(session);
+    return getMemoryStatsFallback(session, deviceId);
   } finally {
     await session.close();
   }
 }
 
-async function getMemoryStatsFallback(session) {
+async function getMemoryStatsFallback(session, deviceId = 'DEV-DEFAULT') {
   const s2 = getSession();
   try {
     const [hot, warm, cold, active, past] = await Promise.all([
-      s2.run(`MATCH (e:Event) WHERE e.tier = 'hot' RETURN count(e) AS c`),
-      s2.run(`MATCH (e:Event) WHERE e.tier = 'warm' RETURN count(e) AS c`),
-      s2.run(`MATCH (e:Event) WHERE e.tier = 'cold' RETURN count(e) AS c`),
-      s2.run(`MATCH (s:State {present: true}) RETURN count(s) AS c`),
-      s2.run(`MATCH (s:State {present: false}) RETURN count(s) AS c`),
+      s2.run(`MATCH (e:Event) WHERE e.tier = 'hot' AND (e.deviceId = $deviceId OR e.deviceId IS NULL) RETURN count(e) AS c`, { deviceId }),
+      s2.run(`MATCH (e:Event) WHERE e.tier = 'warm' AND (e.deviceId = $deviceId OR e.deviceId IS NULL) RETURN count(e) AS c`, { deviceId }),
+      s2.run(`MATCH (e:Event) WHERE e.tier = 'cold' AND (e.deviceId = $deviceId OR e.deviceId IS NULL) RETURN count(e) AS c`, { deviceId }),
+      s2.run(`MATCH (s:State {present: true}) WHERE s.deviceId = $deviceId OR s.deviceId IS NULL RETURN count(s) AS c`, { deviceId }),
+      s2.run(`MATCH (s:State {present: false}) WHERE s.deviceId = $deviceId OR s.deviceId IS NULL RETURN count(s) AS c`, { deviceId }),
     ]);
 
     const toN = (r) => r.records[0]?.get('c')?.toNumber() ?? 0;
@@ -450,17 +462,17 @@ async function getMemoryStatsFallback(session) {
  * Returns recent Event nodes for the Memory Book timeline view.
  * @param {number} days - How many past days to include (default 7)
  */
-export async function getTimelineEvents(days = 7) {
+export async function getTimelineEvents(days = 7, deviceId = 'DEV-DEFAULT') {
   const session = getSession();
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
   try {
     const result = await session.run(
       `MATCH (e:Event)
-       WHERE e.timestamp >= $cutoff
+       WHERE e.timestamp >= $cutoff AND (e.deviceId = $deviceId OR e.deviceId IS NULL)
        RETURN e
        ORDER BY e.timestamp DESC
        LIMIT 200`,
-      { cutoff }
+      { cutoff, deviceId }
     );
     return result.records.map((r) => r.get('e').properties);
   } finally {
@@ -471,3 +483,63 @@ export async function getTimelineEvents(days = 7) {
 // ─── Helper: Neo4j Integer ───────────────────────────────────────────────────
 import neo4j from 'neo4j-driver';
 const neo4jInt = (n) => neo4j.int(n);
+
+/**
+ * Parallel extraction of user states & preferences from voice/text queries.
+ * As requested by user: states are created from user statements (e.g., liked technologies,
+ * favorite genres, current company/job). When a new state is ingested, any previous state
+ * for that attribute is automatically invalidated (present = false).
+ */
+export async function extractAndRecordUserStateFromVoice(prompt, deviceId = 'DEV-DEFAULT') {
+  if (!prompt || typeof prompt !== 'string' || prompt.length < 5) return [];
+
+  // Fast check: if input is a question (ends with '?' or asks a question), do not extract/save states!
+  const trimmed = prompt.trim();
+  if (trimmed.endsWith('?') || /^(what|which|who|when|where|why|how|can you|could you|do you|did i|is my|are my|tell me what|tell me which)/i.test(trimmed)) {
+    console.log('[Voice State Extraction] Question detected — skipping state extraction (retrieval mode).');
+    return [];
+  }
+
+  try {
+    const sysPrompt = `You are a strict user preference and state extraction analyzer.
+Analyze the user's input.
+CRITICAL RULE 1: If the user is ASKING A QUESTION (e.g., "what did I like in the agentic system?", "what is my current company?", "which framework do I like?"), return [] immediately! NEVER extract or save states from interrogative questions!
+CRITICAL RULE 2: ONLY extract states if the user is making a DECLARATIVE STATEMENT stating a personal preference, liked technology, favorite topic, or current status (e.g., "I like multi-agent architecture", "Since I like React, build me a dashboard", "My current company is Google").
+
+If valid declarative states are found, return a JSON array: [{"attribute": "FAVORITE_CONCEPT", "value": "Multi-agent systems"}].
+Otherwise return [].`;
+
+    const res = await openai.chat.completions.create({
+      model: MODEL_NAME,
+      messages: [
+        { role: 'system', content: sysPrompt },
+        { role: 'user', content: prompt }
+      ],
+      temperature: 0,
+    });
+
+    const content = res.choices?.[0]?.message?.content || '[]';
+    const clean = content.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+    const extracted = JSON.parse(clean);
+
+    if (Array.isArray(extracted) && extracted.length > 0) {
+      console.log(`[Voice State Extraction] Extracted ${extracted.length} states from user voice:`, extracted);
+      const saved = [];
+      for (const item of extracted) {
+        if (item.attribute && item.value) {
+          const stored = await ingestState({
+            entity_name: 'User',
+            attribute: item.attribute.toUpperCase(),
+            value: String(item.value).trim()
+          }, deviceId);
+          saved.push(stored);
+        }
+      }
+      return saved;
+    }
+  } catch (err) {
+    console.warn('[Voice State Extraction] Warning during extraction:', err.message);
+  }
+  return [];
+}
+

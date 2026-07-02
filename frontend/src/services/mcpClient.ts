@@ -114,7 +114,7 @@ class McpClientService {
         uri: resourceUri,
       });
       if (resourceResult.contents && resourceResult.contents[0]) {
-        html = resourceResult.contents[0].text;
+        html = (resourceResult.contents[0] as any).text;
       }
     }
 

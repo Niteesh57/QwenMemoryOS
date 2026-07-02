@@ -3,6 +3,41 @@ import { EdgeTTS } from 'edge-tts-universal';
 const TRUSTED_TOKEN = '6A5AA1D4EAFF4E9FB37E23D68491D6F4';
 const VOICES_URL = `https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken=${TRUSTED_TOKEN}`;
 
+const TARGET_VOICES = [
+  {
+    name: 'Microsoft WilliamMultilingual Online (Natural) - English (Australia)',
+    shortName: 'en-AU-WilliamMultilingualNeural',
+    lang: 'en-AU',
+    gender: 'Male',
+    localService: false,
+    voiceURI: 'en-AU-WilliamMultilingualNeural'
+  },
+  {
+    name: 'Microsoft Natasha Online (Natural) - English (Australia)',
+    shortName: 'en-AU-NatashaNeural',
+    lang: 'en-AU',
+    gender: 'Female',
+    localService: false,
+    voiceURI: 'en-AU-NatashaNeural'
+  },
+  {
+    name: 'Microsoft David Desktop - English (United States)',
+    shortName: 'en-US-GuyNeural',
+    lang: 'en-US',
+    gender: 'Male',
+    localService: true,
+    voiceURI: 'Microsoft David Desktop - English (United States)'
+  },
+  {
+    name: 'Microsoft Zira Desktop - English (United States)',
+    shortName: 'en-US-JennyNeural',
+    lang: 'en-US',
+    gender: 'Female',
+    localService: true,
+    voiceURI: 'Microsoft Zira Desktop - English (United States)'
+  }
+];
+
 let voicesCache = null;
 let lastCacheTime = 0;
 
@@ -22,20 +57,35 @@ export async function getEdgeVoices() {
     const data = await res.json();
     
     // Map Microsoft voice properties to match SpeechSynthesisVoice format for the frontend!
-    voicesCache = data.map(v => ({
+    const mapped = data.map(v => ({
       name: v.FriendlyName || v.Name,
       shortName: v.ShortName,
       lang: v.Locale,
       gender: v.Gender,
       localService: false,
       voiceURI: v.ShortName
-    }));
+    })).filter(v => {
+      const nameLower = (v.name || '').toLowerCase();
+      const shortLower = (v.shortName || '').toLowerCase();
+      return nameLower.includes('williammultilingual') || shortLower.includes('williammultilingual') ||
+             nameLower.includes('natasha') || shortLower.includes('natasha') ||
+             nameLower.includes('david') || shortLower.includes('david') ||
+             nameLower.includes('zira') || shortLower.includes('zira');
+    });
+
+    const result = mapped.length > 0 ? [...mapped] : [...TARGET_VOICES];
+    for (const fb of TARGET_VOICES) {
+      if (!result.some(v => v.name === fb.name)) {
+        result.push(fb);
+      }
+    }
+    voicesCache = result;
     lastCacheTime = now;
     console.log(`[Edge TTS] Loaded ${voicesCache.length} voices successfully.`);
     return voicesCache;
   } catch (err) {
     console.error('[Edge TTS] Failed to fetch voices list:', err.message);
-    return voicesCache || []; // Fallback to cache if request fails
+    return voicesCache || TARGET_VOICES; // Fallback to targeted voices if request fails
   }
 }
 

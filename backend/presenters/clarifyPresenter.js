@@ -15,7 +15,7 @@ export const handleClarifyRequest = async (req, res) => {
 
   try {
     console.log(`[API Clarify Presenter] Mode: ${mode} | Clarifying context of length ${textContext.length}`);
-    const answer = await runClarificationAgent({ mode, textContext });
+    const answer = await runClarificationAgent({ mode, textContext, deviceId: req.deviceId || 'DEV-DEFAULT' });
     
     res.json({ answer });
   } catch (err) {

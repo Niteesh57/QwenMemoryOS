@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import type { VisualizerState } from '../components/VoiceVisualizer';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import { mcpClientService } from '../services/mcpClient';
+import { getDeviceHeaders } from '../utils/deviceIdentity';
 
 export interface CompanionController {
   isPipOpen: boolean;
@@ -84,7 +85,7 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
     resetTranscript,
   } = useSpeechRecognition();
 
-  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [_isSpeaking, setIsSpeaking] = useState(false);
   const isRequestingRef = useRef(false);
   const lastStartRef = useRef<number>(0);
 
@@ -94,14 +95,35 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
 
   // Load voices into ref on mount — same pattern as MemeRenderer.tsx
   useEffect(() => {
+    const fallbackVoices = [
+      { name: 'Microsoft WilliamMultilingual Online (Natural) - English (Australia)', lang: 'en-AU', shortName: 'en-AU-WilliamMultilingualNeural', voiceURI: 'en-AU-WilliamMultilingualNeural' } as any,
+      { name: 'Microsoft Natasha Online (Natural) - English (Australia)', lang: 'en-AU', shortName: 'en-AU-NatashaNeural', voiceURI: 'en-AU-NatashaNeural' } as any,
+      { name: 'Microsoft David Desktop - English (United States)', lang: 'en-US', shortName: 'en-US-GuyNeural', voiceURI: 'Microsoft David Desktop - English (United States)' } as any,
+      { name: 'Microsoft Zira Desktop - English (United States)', lang: 'en-US', shortName: 'en-US-JennyNeural', voiceURI: 'Microsoft Zira Desktop - English (United States)' } as any
+    ];
+
+    const filterTargets = (list: any[]) => list.filter(v => {
+      const nameLower = (v.name || '').toLowerCase();
+      const shortLower = (v.shortName || v.voiceURI || '').toLowerCase();
+      return nameLower.includes('williammultilingual') || shortLower.includes('williammultilingual') ||
+             nameLower.includes('natasha') || shortLower.includes('natasha') ||
+             nameLower.includes('david') || shortLower.includes('david') ||
+             nameLower.includes('zira') || shortLower.includes('zira');
+    });
+
     const loadVoices = async () => {
       try {
         const res = await fetch('http://localhost:3000/api/tts/voices');
         if (!res.ok) throw new Error('API failure');
         const cloudVoices = await res.json();
         if (cloudVoices && cloudVoices.length > 0) {
-          voicesRef.current = cloudVoices;
-          console.log('[TTS Hook] Loaded cloud voices:', cloudVoices.length);
+          const filtered = filterTargets(cloudVoices);
+          const result = filtered.length > 0 ? [...filtered] : [...fallbackVoices];
+          for (const fb of fallbackVoices) {
+            if (!result.some(v => v.name === fb.name)) result.push(fb);
+          }
+          voicesRef.current = result;
+          console.log('[TTS Hook] Loaded cloud voices:', voicesRef.current.length);
           return;
         }
       } catch (err) {
@@ -109,11 +131,13 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
       }
 
       const all = window.speechSynthesis.getVoices();
-      if (all.length > 0) {
-        const nonGoogle = all.filter(v => !v.name.toLowerCase().includes('google'));
-        voicesRef.current = nonGoogle.length > 0 ? nonGoogle : all;
-        console.log('[TTS Hook] Loaded local browser voices:', voicesRef.current.length);
+      const filtered = filterTargets(all);
+      const result = filtered.length > 0 ? [...filtered] : [...fallbackVoices];
+      for (const fb of fallbackVoices) {
+        if (!result.some(v => v.name === fb.name)) result.push(fb);
       }
+      voicesRef.current = result;
+      console.log('[TTS Hook] Loaded local browser voices:', voicesRef.current.length);
     };
     loadVoices();
     window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
@@ -181,7 +205,18 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
   const getVoicesReady = (): SpeechSynthesisVoice[] => {
     // If cache is empty somehow, try one more time synchronously
     if (voicesRef.current.length === 0) {
-      voicesRef.current = window.speechSynthesis.getVoices();
+      const all = window.speechSynthesis.getVoices();
+      const filtered = all.filter(v => {
+        const nameLower = (v.name || '').toLowerCase();
+        return nameLower.includes('williammultilingual') || nameLower.includes('natasha') ||
+               nameLower.includes('david') || nameLower.includes('zira');
+      });
+      voicesRef.current = filtered.length > 0 ? filtered : [
+        { name: 'Microsoft WilliamMultilingual Online (Natural) - English (Australia)', lang: 'en-AU', shortName: 'en-AU-WilliamMultilingualNeural', voiceURI: 'en-AU-WilliamMultilingualNeural' } as any,
+        { name: 'Microsoft Natasha Online (Natural) - English (Australia)', lang: 'en-AU', shortName: 'en-AU-NatashaNeural', voiceURI: 'en-AU-NatashaNeural' } as any,
+        { name: 'Microsoft David Desktop - English (United States)', lang: 'en-US', shortName: 'en-US-GuyNeural', voiceURI: 'Microsoft David Desktop - English (United States)' } as any,
+        { name: 'Microsoft Zira Desktop - English (United States)', lang: 'en-US', shortName: 'en-US-JennyNeural', voiceURI: 'Microsoft Zira Desktop - English (United States)' } as any
+      ];
     }
     return voicesRef.current;
   };
@@ -239,20 +274,62 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
         activeAudioRef.current = null;
       };
 
+      const playOfflineFallback = () => {
+        console.warn('[Cloud TTS] Cloud audio failed/offline. Automatically falling back to offline inbuilt voice.');
+        const allLocal = window.speechSynthesis.getVoices();
+        const isMale = selectedVoice.name.toLowerCase().includes('william') || selectedVoice.name.toLowerCase().includes('david') || selectedVoice.name.toLowerCase().includes('male');
+        const localVoice = allLocal.find(v => {
+          const n = v.name.toLowerCase();
+          return isMale ? (n.includes('david') || n.includes('mark') || n.includes('male'))
+                        : (n.includes('zira') || n.includes('hazel') || n.includes('female'));
+        }) ?? allLocal.find(v => v.lang.startsWith('en')) ?? allLocal[0];
+
+        if (!localVoice && !('speechSynthesis' in window)) {
+          setIsTtsSpeaking(false);
+          setVolume(0);
+          setAssistantState('idle');
+          activeAudioRef.current = null;
+          return;
+        }
+
+        const utterance = new SpeechSynthesisUtterance(cleanSpeech);
+        if (localVoice) {
+          utterance.voice = localVoice;
+          utterance.lang = localVoice.lang;
+        } else {
+          utterance.lang = 'en-US';
+        }
+        utterance.rate = savedRate;
+        utterance.pitch = savedPitch;
+        utterance.volume = savedVolume;
+
+        utterance.onstart = () => {
+          setIsTtsSpeaking(true);
+          setAssistantState('processing');
+          simulateSpeechVolume();
+        };
+        utterance.onend = () => {
+          setIsTtsSpeaking(false);
+          setVolume(0);
+          setAssistantState('idle');
+        };
+        utterance.onerror = () => {
+          setIsTtsSpeaking(false);
+          setVolume(0);
+          setAssistantState('idle');
+        };
+
+        window.speechSynthesis.speak(utterance);
+      };
+
       audio.onerror = (e) => {
         console.warn('[Cloud TTS] Audio element error:', e);
-        setIsTtsSpeaking(false);
-        setVolume(0);
-        setAssistantState('idle');
-        activeAudioRef.current = null;
+        playOfflineFallback();
       };
 
       audio.play().catch(err => {
         console.warn('[Cloud TTS] Playback start failed:', err);
-        setIsTtsSpeaking(false);
-        setVolume(0);
-        setAssistantState('idle');
-        activeAudioRef.current = null;
+        playOfflineFallback();
       });
       return;
     }
@@ -502,7 +579,7 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
       console.log(`[Voice API Stream Ask] Sending prompt: "${query}"`);
       const res = await fetch('http://localhost:3000/api/ask', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getDeviceHeaders() },
         body: JSON.stringify({ prompt: query }),
       });
 

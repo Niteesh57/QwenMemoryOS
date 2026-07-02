@@ -5,6 +5,13 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 import { createClient } from '@supabase/supabase-js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const STATIC_DIR = path.join(__dirname, '../public/static/videos');
 
 let supabaseClient = null;
 
@@ -36,7 +43,24 @@ const BUCKET = () => process.env.SUPABASE_BUCKET || 'qwen';
  * @param {string} contentType - e.g. "video/webm"
  * @returns {string} publicUrl
  */
-export async function uploadVideoChunk(buffer, filename, contentType = 'video/webm') {
+export async function uploadVideoChunk(buffer, filename, contentType = 'video/webm', deviceId = 'DEV-DEFAULT') {
+  const mode = (process.env.STORAGE_MODE || 'cloud').toLowerCase();
+
+  if (mode === 'local') {
+    if (!fs.existsSync(STATIC_DIR)) {
+      fs.mkdirSync(STATIC_DIR, { recursive: true });
+    }
+    const uniqueName = `${deviceId}_${filename}`;
+    const localPath = path.join(STATIC_DIR, uniqueName);
+    await fs.promises.writeFile(localPath, buffer);
+
+    const baseUrl = process.env.LOCAL_PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`;
+    const publicUrl = `${baseUrl}/static/videos/${uniqueName}`;
+    console.log(`[Storage:Local] Saved chunk to disk → ${localPath}`);
+    console.log(`[Storage:Local] Served at public URL → ${publicUrl}`);
+    return publicUrl;
+  }
+
   const supabase = getSupabase();
   const bucket = BUCKET();
 
@@ -68,7 +92,25 @@ export async function uploadVideoChunk(buffer, filename, contentType = 'video/we
  * Delete an old chunk from storage (called after successful Neo4j ingestion).
  * Optional — keeps bucket from filling up.
  */
-export async function deleteVideoChunk(filename) {
+export async function deleteVideoChunk(filename, deviceId = 'DEV-DEFAULT') {
+  const mode = (process.env.STORAGE_MODE || 'cloud').toLowerCase();
+
+  if (mode === 'local') {
+    const uniqueName = filename.startsWith(deviceId) ? filename : `${deviceId}_${filename}`;
+    const localPath = path.join(STATIC_DIR, uniqueName);
+    if (fs.existsSync(localPath)) {
+      await fs.promises.unlink(localPath);
+      console.log(`[Storage:Local] Deleted chunk from disk after LLM analysis → ${localPath}`);
+    } else {
+      const exactPath = path.join(STATIC_DIR, filename);
+      if (fs.existsSync(exactPath)) {
+        await fs.promises.unlink(exactPath);
+        console.log(`[Storage:Local] Deleted chunk from disk after LLM analysis → ${exactPath}`);
+      }
+    }
+    return;
+  }
+
   const supabase = getSupabase();
   const bucket = BUCKET();
   await supabase.storage.from(bucket).remove([`chunks/${filename}`]);

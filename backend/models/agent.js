@@ -6,6 +6,7 @@ import { generalAgentNode } from "../agents/generalAgent.js";
 
 export const AgentState = Annotation.Root({
   prompt: Annotation({ default: () => "" }),
+  deviceId: Annotation({ default: () => "DEV-DEFAULT" }),
   targetAgent: Annotation({ default: () => "general" }),
   needsUI: Annotation({ default: () => false }),
   messages: Annotation({

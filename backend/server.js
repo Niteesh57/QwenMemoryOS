@@ -1,6 +1,8 @@
 import express from "express";
 import cors from "cors";
 import multer from "multer";
+import path from "path";
+import { fileURLToPath } from "url";
 import "./env.js";
 import { handleAskRequest } from "./presenters/askPresenter.js";
 import { handleSseConnection, handlePostMessage } from "./presenters/mcpPresenter.js";
@@ -19,6 +21,7 @@ import {
   handleLatestAnalysis,
 } from "./presenters/memoryPresenter.js";
 import { bootstrapSchema } from "./services/neo4jService.js";
+import { generateOtp, verifyOtp } from "./services/deviceAuthService.js";
 
 // ═══════════════════════════════════════════════════════════════════════
 //  MULTER — Video chunk uploads (in-memory, up to 500 MB)
@@ -37,6 +40,16 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+app.use('/static', express.static(path.join(__dirname, 'public/static')));
+
+// Device ID extraction middleware
+app.use((req, res, next) => {
+  req.deviceId = req.headers['x-device-id'] || req.query.deviceId || req.body?.deviceId || 'DEV-DEFAULT';
+  next();
+});
+
 // ─── MCP Routes ────────────────────────────────────────────────────────
 app.get("/sse", handleSseConnection);
 app.post("/messages", handlePostMessage);
@@ -44,6 +57,28 @@ app.post("/messages", handlePostMessage);
 // ─── Main Ask API ──────────────────────────────────────────────────────
 app.post("/api/ask", handleAskRequest);
 app.post("/api/clarify", handleClarifyRequest);
+
+// ─── Device ID & 2-Minute OTP Pairing APIs ─────────────────────────────
+app.post("/api/device/otp/generate", (req, res) => {
+  try {
+    const deviceId = req.headers['x-device-id'] || req.body.deviceId;
+    const deviceName = req.headers['x-device-name'] || req.body.deviceName;
+    const result = generateOtp(deviceId, deviceName);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
+app.post("/api/device/otp/verify", (req, res) => {
+  try {
+    const { otp, targetDevice } = req.body;
+    const result = verifyOtp(otp, targetDevice);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
 
 // ─── Edge TTS Cloud Voice APIs ─────────────────────────────────────────
 app.get("/api/tts/voices", handleGetVoices);

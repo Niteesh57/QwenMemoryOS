@@ -7,6 +7,7 @@ import { motion, useMotionValue, useSpring, useTransform, AnimatePresence } from
 import { MeshGradientBackground } from './components/MeshGradientBackground';
 import { McpAppsManager } from './components/McpAppsManager';
 import { MemoryBookManager } from './components/MemoryBookManager';
+import { DevicePairingSettings } from './components/DevicePairingSettings';
 import { Battery, Wifi, Mic, MicOff, Tv, Bot, User } from 'lucide-react';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -49,17 +50,6 @@ const HistoryIcon = () => (
         <stop offset="100%" stopColor="#6366f1" />
       </linearGradient>
     </defs>
-  </svg>
-);
-
-const VSCodeIcon = () => (
-  <svg viewBox="0 0 64 64" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
-    <path d="M12 18 L44 6 L52 14 L12 46 Z" fill="#007acc" opacity="0.85" />
-    <path d="M12 46 L44 58 L52 50 L12 18 Z" fill="#007acc" />
-    <path d="M52 14 L32 32 L52 50 Z" fill="#1f9cf0" />
-    <path d="M12 18 L24 32 L12 46 Z" fill="#0065a3" />
-    <path d="M12 18 L4 24 L12 32 Z" fill="#00568a" />
-    <path d="M12 46 L4 40 L12 32 Z" fill="#00568a" />
   </svg>
 );
 
@@ -153,15 +143,14 @@ const MacWindow: React.FC<WindowWrapperProps> = ({
 }) => {
   if (!isOpen) return null;
 
-  const width = appId === 'vscode' ? 760 : appId === 'history' ? 780 : appId === 'mcp' ? 820 : appId === 'memory' ? 860 : 540;
-  const height = appId === 'vscode' ? 490 : appId === 'history' ? 480 : appId === 'mcp' ? 520 : appId === 'aichat' ? 220 : appId === 'memory' ? 580 : 430;
+  const width = appId === 'vscode' ? 760 : appId === 'history' ? 780 : appId === 'mcp' ? 820 : appId === 'memory' ? 860 : appId === 'settings' ? 740 : 540;
+  const height = appId === 'vscode' ? 490 : appId === 'history' ? 480 : appId === 'mcp' ? 520 : appId === 'aichat' ? 220 : appId === 'memory' ? 580 : appId === 'settings' ? 560 : 430;
 
   return (
     <motion.div
       drag
       dragMomentum={false}
       dragElastic={0.02}
-      dragHandleClassName="win-header-drag"
       onPointerDown={onFocus}
       initial={{ scale: 0.9, opacity: 0, x: defaultPos.x, y: defaultPos.y }}
       animate={{ scale: 1, opacity: 1 }}
@@ -469,10 +458,10 @@ export default function App() {
     memory: 10,
   });
 
-  const [activeWindow, _setActiveWindow] = useState('aichat');
+  const [_activeWindow, _setActiveWindow] = useState('aichat');
   
   // Custom HTML Sandbox state
-  const [customHtml, setCustomHtml] = useState(
+  const [_customHtml, _setCustomHtml] = useState(
     `<div style="display:flex; flex-direction:column; gap:8px; padding:4px;">
   <span style="font-weight:600; color:#ec4899; font-size:13px; text-shadow:0 0 8px rgba(236,72,153,0.3)">
     ✨ system_widget.dll
@@ -484,17 +473,13 @@ export default function App() {
 </div>`
   );
 
-  // VS Code active file state
-  const [selectedFile, setSelectedFile] = useState<'useCompanionController.ts' | 'VoiceCompanionBar.tsx' | 'PipPortal.tsx'>('useCompanionController.ts');
-
   // Small notifications state
   const [toast, setToast] = useState<string | null>(null);
+  const [settingsTab, setSettingsTab] = useState<'voice' | 'device'>('voice');
 
   const [ttsVoice, setTtsVoice] = useState<string>(() => {
     return localStorage.getItem('qwenos_tts_voice') || '';
   });
-  const [ttsVoiceSearch, setTtsVoiceSearch] = useState<string>('');
-  const [ttsLanguage, setTtsLanguage] = useState<string>('all');
 
   const [ttsRate, setTtsRate] = useState<number>(() => {
     return parseFloat(localStorage.getItem('qwenos_tts_rate') || '1.0');
@@ -511,21 +496,49 @@ export default function App() {
 
   useEffect(() => {
     const loadVoices = async () => {
+      const fallbackVoices = [
+        { name: 'Microsoft WilliamMultilingual Online (Natural) - English (Australia)', lang: 'en-AU', shortName: 'en-AU-WilliamMultilingualNeural', voiceURI: 'en-AU-WilliamMultilingualNeural' } as any,
+        { name: 'Microsoft Natasha Online (Natural) - English (Australia)', lang: 'en-AU', shortName: 'en-AU-NatashaNeural', voiceURI: 'en-AU-NatashaNeural' } as any,
+        { name: 'Microsoft David Desktop - English (United States)', lang: 'en-US', shortName: 'en-US-GuyNeural', voiceURI: 'Microsoft David Desktop - English (United States)' } as any,
+        { name: 'Microsoft Zira Desktop - English (United States)', lang: 'en-US', shortName: 'en-US-JennyNeural', voiceURI: 'Microsoft Zira Desktop - English (United States)' } as any
+      ];
+
+      const filterTargets = (list: any[]) => list.filter(v => {
+        const nameLower = (v.name || '').toLowerCase();
+        const shortLower = (v.shortName || v.voiceURI || '').toLowerCase();
+        return nameLower.includes('williammultilingual') || shortLower.includes('williammultilingual') ||
+               nameLower.includes('natasha') || shortLower.includes('natasha') ||
+               nameLower.includes('david') || shortLower.includes('david') ||
+               nameLower.includes('zira') || shortLower.includes('zira');
+      });
+
+      const applyVoices = (voices: any[]) => {
+        const result = voices.length > 0 ? [...voices] : [...fallbackVoices];
+        for (const fb of fallbackVoices) {
+          if (!result.some(v => v.name === fb.name)) {
+            result.push(fb);
+          }
+        }
+        setAvailableVoices(result);
+        const currentSaved = localStorage.getItem('qwenos_tts_voice');
+        if (!currentSaved || !result.some(v => v.name === currentSaved)) {
+          const defaultVoice = result[0];
+          if (defaultVoice) {
+            localStorage.setItem('qwenos_tts_voice', defaultVoice.name);
+            setTtsVoice(defaultVoice.name);
+          }
+        }
+      };
+
       try {
         console.log('[TTS Init] Fetching cloud voices from backend...');
         const res = await fetch('http://localhost:3000/api/tts/voices');
         if (!res.ok) throw new Error('API failure');
         const cloudVoices = await res.json();
         if (cloudVoices && cloudVoices.length > 0) {
-          setAvailableVoices(cloudVoices);
-          console.log('[TTS Init] Loaded cloud voices:', cloudVoices.length);
-          if (!localStorage.getItem('qwenos_tts_voice')) {
-            const defaultVoice = cloudVoices.find(v => v.lang.startsWith('en')) ?? cloudVoices[0];
-            if (defaultVoice) {
-              localStorage.setItem('qwenos_tts_voice', defaultVoice.name);
-              setTtsVoice(defaultVoice.name);
-            }
-          }
+          const filtered = filterTargets(cloudVoices);
+          applyVoices(filtered);
+          console.log('[TTS Init] Loaded cloud voices:', filtered.length);
           return;
         }
       } catch (err) {
@@ -533,21 +546,9 @@ export default function App() {
       }
 
       const all = window.speechSynthesis.getVoices();
-      if (all.length > 0) {
-        const nonGoogle = all.filter(v => !v.name.toLowerCase().includes('google'));
-        const filtered = nonGoogle.length > 0 ? nonGoogle : all;
-        
-        setAvailableVoices(filtered);
-        console.log('[TTS Init] Loaded local browser voices:', filtered.length);
-        
-        if (!localStorage.getItem('qwenos_tts_voice')) {
-          const defaultVoice = filtered.find(v => v.lang.startsWith('en')) ?? filtered[0];
-          if (defaultVoice) {
-            localStorage.setItem('qwenos_tts_voice', defaultVoice.name);
-            setTtsVoice(defaultVoice.name);
-          }
-        }
-      }
+      const filtered = filterTargets(all);
+      applyVoices(filtered);
+      console.log('[TTS Init] Loaded local/fallback voices:', filtered.length);
     };
     loadVoices();
     window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
@@ -611,7 +612,6 @@ export default function App() {
     { id: 'mcp', label: 'MCP Tools', icon: MCPIcon, hasWindow: true },
     { id: 'history', label: 'View History', icon: HistoryIcon, hasWindow: true },
     { id: 'memory', label: 'Memory Book', icon: MemoryBookIcon, hasWindow: true },
-    { id: 'vscode', label: 'VS Code', icon: VSCodeIcon, hasWindow: true },
     { id: 'aichat', label: 'AI Companion', icon: AIChatIcon, hasWindow: true },
     { id: 'settings', label: 'Settings', icon: SettingsIcon, hasWindow: true }
   ];
@@ -1087,136 +1087,6 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {/* WINDOW 3: VS Code Workspace Mockup */}
-        <AnimatePresence>
-          {openWindows.vscode && (
-            <MacWindow
-              appId="vscode"
-              label="Visual Studio Code"
-              isOpen={openWindows.vscode}
-              onClose={() => closeWindow('vscode')}
-              zIndex={windowZIndex.vscode}
-              defaultPos={{ x: 60, y: 150 }}
-              onFocus={() => bringToFront('vscode')}
-            >
-              <div style={{ display: 'flex', width: '100%', height: '100%', overflow: 'hidden' }}>
-                
-                {/* File Tree Explorer Side-Bar */}
-                <div style={{
-                  width: '180px',
-                  background: '#18181b',
-                  borderRight: '1px solid rgba(0,0,0,0.3)',
-                  padding: '14px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '12px',
-                  flexShrink: 0
-                }}>
-                  <span style={{ fontSize: '10px', color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                    workspace-core
-                  </span>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    {['useCompanionController.ts', 'VoiceCompanionBar.tsx', 'PipPortal.tsx'].map((file) => (
-                      <div
-                        key={file}
-                        onClick={() => setSelectedFile(file as any)}
-                        style={{
-                          fontSize: '11.5px',
-                          color: selectedFile === file ? '#60a5fa' : 'rgba(255,255,255,0.5)',
-                          cursor: 'pointer',
-                          padding: '4px 6px',
-                          borderRadius: '4px',
-                          background: selectedFile === file ? 'rgba(96,165,250,0.1)' : 'transparent',
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis'
-                        }}
-                      >
-                        📄 {file}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Editor Content Area */}
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#09090b', overflow: 'hidden' }}>
-                  
-                  {/* File Tab */}
-                  <div style={{ height: '30px', background: '#111', display: 'flex', alignItems: 'center', px: '14px', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                    <span style={{ fontSize: '11px', color: '#60a5fa', padding: '0 12px' }}>
-                      {selectedFile}
-                    </span>
-                  </div>
-
-                  {/* Code Block Renderer */}
-                  <div style={{
-                    flex: 1,
-                    padding: '16px',
-                    fontFamily: 'Consolas, Monaco, monospace',
-                    fontSize: '11px',
-                    lineHeight: 1.6,
-                    overflowY: 'auto',
-                    color: '#e2e8f0'
-                  }}>
-                    {selectedFile === 'useCompanionController.ts' && (
-                      <pre style={{ margin: 0 }}>
-                        <span style={{ color: '#ff7b72' }}>import</span> {'{ useState, useEffect, useRef }'} <span style={{ color: '#ff7b72' }}>from</span> <span style={{ color: '#a5d6ff' }}>'react'</span>;<br />
-                        <span style={{ color: '#ff7b72' }}>import</span> SpeechRecognition, {'{ useSpeechRecognition }'} <span style={{ color: '#ff7b72' }}>from</span> <span style={{ color: '#a5d6ff' }}>'speech'</span>;<br /><br />
-                        <span style={{ color: '#ff7b72' }}>export function</span> <span style={{ color: '#d2a8ff' }}>useCompanionController</span>() {'{'}<br />
-                        &nbsp;&nbsp;<span style={{ color: '#ff7b72' }}>const</span> [isPipOpen, setIsPipOpen] = <span style={{ color: '#d2a8ff' }}>useState</span>(<span style={{ color: '#79c0ff' }}>false</span>);<br />
-                        &nbsp;&nbsp;<span style={{ color: '#ff7b72' }}>const</span> {'{ transcript, listening }'} = <span style={{ color: '#d2a8ff' }}>useSpeechRecognition</span>();<br />
-                        &nbsp;&nbsp;<span style={{ color: '#ff7b72' }}>const</span> [isSpeaking, setIsSpeaking] = <span style={{ color: '#d2a8ff' }}>useState</span>(<span style={{ color: '#79c0ff' }}>false</span>);<br /><br />
-                        &nbsp;&nbsp;<span style={{ color: '#8b949e' }}>// Auto-trigger speaking expansion on voice stream detection</span><br />
-                        &nbsp;&nbsp;<span style={{ color: '#d2a8ff' }}>useEffect</span>(() <span style={{ color: '#ff7b72' }}>=&gt;</span> {'{'} <span style={{ color: '#8b949e' }}>/* resize PiP code */</span> {'}'}, [transcript]);<br /><br />
-                        &nbsp;&nbsp;<span style={{ color: '#ff7b72' }}>return</span> {'{ isPipOpen, isSpeaking, transcript, listening }'};<br />
-                        {'}'}
-                      </pre>
-                    )}
-                    {selectedFile === 'VoiceCompanionBar.tsx' && (
-                      <pre style={{ margin: 0 }}>
-                        <span style={{ color: '#ff7b72' }}>export const</span> <span style={{ color: '#d2a8ff' }}>VoiceCompanionBar</span> = ({'{ state, transcript, isSpeaking }'}: Props) <span style={{ color: '#ff7b72' }}>=&gt;</span> {'{'}<br />
-                        &nbsp;&nbsp;<span style={{ color: '#ff7b72' }}>if</span> (!isSpeaking) {'{'}<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;<span style={{ color: '#ff7b72' }}>return</span> &lt;<span style={{ color: '#7ee787' }}>div</span> className=<span style={{ color: '#a5d6ff' }}>"mini-glowing-mic-orb"</span> /&gt;;<br />
-                        &nbsp;&nbsp;{'}'}<br /><br />
-                        &nbsp;&nbsp;<span style={{ color: '#ff7b72' }}>return</span> (<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;&lt;<span style={{ color: '#7ee787' }}>div</span> style={'{'}containerStyle{'}'}&gt;<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&lt;<span style={{ color: '#7ee787' }}>span</span>&gt;{'{'}transcript{'}'}&lt;/<span style={{ color: '#7ee787' }}>span</span>&gt;<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&lt;<span style={{ color: '#7ee787' }}>canvas</span> ref={'{'}canvasRef{'}'} /&gt;<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;&lt;/<span style={{ color: '#7ee787' }}>div</span>&gt;<br />
-                        &nbsp;&nbsp;);<br />
-                        {'}'};
-                      </pre>
-                    )}
-                    {selectedFile === 'PipPortal.tsx' && (
-                      <pre style={{ margin: 0 }}>
-                        <span style={{ color: '#ff7b72' }}>export const</span> <span style={{ color: '#d2a8ff' }}>PipPortal</span> = ({'{ isOpen, width, height, isSpeaking }'}: Props) <span style={{ color: '#ff7b72' }}>=&gt;</span> {'{'}<br />
-                        &nbsp;&nbsp;<span style={{ color: '#8b949e' }}>// Hooks React portal rendering inside chromium PiP overlay</span><br />
-                        &nbsp;&nbsp;<span style={{ color: '#ff7b72' }}>const</span> openPipWindow = <span style={{ color: '#ff7b72' }}>async</span> () <span style={{ color: '#ff7b72' }}>=&gt;</span> {'{'}<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;const pip = await window.documentPictureInPicture.requestWindow({'{'} width, height {'}'});<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;<span style={{ color: '#8b949e' }}>// Apply dynamic translucent backgrounds</span><br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;pip.document.body.style.background = isSpeaking ? <span style={{ color: '#a5d6ff' }}>'rgba(8, 8, 16, 0.75)'</span> : <span style={{ color: '#a5d6ff' }}>'transparent'</span>;<br />
-                        &nbsp;&nbsp;{'}'};<br />
-                        {'}'};
-                      </pre>
-                    )}
-                  </div>
-
-                  {/* Terminal panel */}
-                  <div style={{ height: '110px', background: '#000', borderTop: '1px solid rgba(255,255,255,0.06)', padding: '10px 14px', fontFamily: 'monospace', fontSize: '10.5px', color: '#34d399', boxSizing: 'border-box' }}>
-                    <div style={{ color: 'rgba(255,255,255,0.45)' }}>bash - npm run dev</div>
-                    <div>&gt; vite --host</div>
-                    <div>&nbsp;&nbsp;➜  Local:&nbsp;&nbsp;&nbsp;http://localhost:5173/</div>
-                    <div>&nbsp;&nbsp;➜  Network:&nbsp;use --host to expose</div>
-                    <div>&nbsp;&nbsp;➜  press h + enter to show help</div>
-                  </div>
-
-                </div>
-
-              </div>
-            </MacWindow>
-          )}
-        </AnimatePresence>
-
         {/* ─── Settings Window ─── */}
         <AnimatePresence>
           {openWindows.settings && (
@@ -1231,8 +1101,8 @@ export default function App() {
             >
               <div style={{
                 display: 'flex',
-                width: '540px',
-                height: '480px',
+                width: '100%',
+                height: '100%',
                 background: '#0d0d12',
                 color: '#f8fafc',
                 fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
@@ -1240,7 +1110,7 @@ export default function App() {
               }}>
                 {/* Left Settings Navigation Sidebar */}
                 <div style={{
-                  width: '150px',
+                  width: '160px',
                   background: '#121218',
                   borderRight: '1px solid rgba(255, 255, 255, 0.05)',
                   padding: '16px 12px',
@@ -1259,19 +1129,39 @@ export default function App() {
                   }}>
                     System
                   </div>
-                  <div style={{
-                    fontSize: '12px',
-                    fontWeight: 500,
-                    color: '#a78bfa',
-                    background: 'rgba(139, 92, 246, 0.1)',
-                    padding: '6px 10px',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px'
-                  }}>
+                  <div
+                    onClick={() => setSettingsTab('voice')}
+                    style={{
+                      fontSize: '12px',
+                      fontWeight: 500,
+                      color: settingsTab === 'voice' ? '#a78bfa' : '#94a3b8',
+                      background: settingsTab === 'voice' ? 'rgba(139, 92, 246, 0.15)' : 'transparent',
+                      padding: '8px 10px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}
+                  >
                     🔊 Voice Assist
+                  </div>
+                  <div
+                    onClick={() => setSettingsTab('device')}
+                    style={{
+                      fontSize: '12px',
+                      fontWeight: 500,
+                      color: settingsTab === 'device' ? '#a78bfa' : '#94a3b8',
+                      background: settingsTab === 'device' ? 'rgba(139, 92, 246, 0.15)' : 'transparent',
+                      padding: '8px 10px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}
+                  >
+                    💻 Device & Graph
                   </div>
                 </div>
 
@@ -1284,6 +1174,10 @@ export default function App() {
                   gap: '20px',
                   overflowY: 'auto'
                 }}>
+                  {settingsTab === 'device' ? (
+                    <DevicePairingSettings onPairChange={() => showToast('Device pairing identity updated')} />
+                  ) : (
+                  <>
                   <div>
                     <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: '#f8fafc' }}>
                       Companion Voice Setting
@@ -1299,98 +1193,20 @@ export default function App() {
                         Select Voice
                       </label>
                       <span style={{ fontSize: '10px', color: '#64748b' }}>
-                        {ttsLanguage === 'all' 
-                          ? availableVoices.length 
-                          : availableVoices.filter(v => v.lang.split('-')[0].split('_')[0].toLowerCase() === ttsLanguage).length
-                        } voices available
+                        {availableVoices.length} voices available
                       </span>
                     </div>
 
-                    {/* Language selector */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <label style={{ fontSize: '10.5px', color: '#94a3b8' }}>Voice Language</label>
-                      <select
-                        value={ttsLanguage}
-                        onChange={(e) => {
-                          const newLang = e.target.value;
-                          setTtsLanguage(newLang);
-                          if (newLang !== 'all') {
-                            // Auto-select first voice in that language
-                            const firstVoice = availableVoices.find(v => v.lang.split('-')[0].split('_')[0].toLowerCase() === newLang);
-                            if (firstVoice) {
-                              localStorage.setItem('qwenos_tts_voice', firstVoice.name);
-                              setTtsVoice(firstVoice.name);
-                              window.dispatchEvent(new Event('qwenos_voice_changed'));
-                            }
-                          }
-                        }}
-                        style={{
-                          background: 'rgba(255,255,255,0.04)',
-                          border: '1px solid rgba(255,255,255,0.1)',
-                          borderRadius: '8px',
-                          padding: '8px 12px',
-                          color: '#e2e8f0',
-                          fontSize: '12px',
-                          outline: 'none',
-                          cursor: 'pointer',
-                          width: '100%',
-                        }}
-                      >
-                        <option value="all" style={{ background: '#09090b', color: '#e2e8f0' }}>
-                          All Languages
-                        </option>
-                        {Array.from(new Set(availableVoices.map(v => v.lang.split('-')[0].split('_')[0].toLowerCase())))
-                          .sort()
-                          .map(lang => {
-                            const names: Record<string, string> = {
-                              en: 'English', es: 'Spanish', fr: 'French', de: 'German',
-                              it: 'Italian', ja: 'Japanese', ko: 'Korean', zh: 'Chinese',
-                              ru: 'Russian', pt: 'Portuguese', nl: 'Dutch', hi: 'Hindi',
-                              ar: 'Arabic', tr: 'Turkish', pl: 'Polish', sv: 'Swedish',
-                              fi: 'Finnish', no: 'Norwegian', da: 'Danish'
-                            };
-                            const friendlyName = names[lang] || lang.toUpperCase();
-                            return (
-                              <option key={lang} value={lang} style={{ background: '#09090b', color: '#e2e8f0' }}>
-                                {friendlyName} ({lang.toUpperCase()})
-                              </option>
-                            );
-                          })}
-                      </select>
-                    </div>
-
-                    {/* Search filter */}
-                    <input
-                      type="text"
-                      placeholder="Search filtered voices..."
-                      value={ttsVoiceSearch}
-                      onChange={e => setTtsVoiceSearch(e.target.value)}
-                      style={{
-                        background: 'rgba(255,255,255,0.04)',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        borderRadius: '8px',
-                        padding: '8px 12px',
-                        color: '#e2e8f0',
-                        fontSize: '12px',
-                        outline: 'none',
-                        width: '100%',
-                        boxSizing: 'border-box',
-                      }}
-                    />
-
                     {/* Scrollable voice list */}
                     <div style={{
-                      maxHeight: '120px',
+                      maxHeight: '150px',
                       overflowY: 'auto',
                       display: 'flex',
                       flexDirection: 'column',
-                      gap: '4px',
+                      gap: '6px',
                       paddingRight: '4px',
                     }}>
-                      {availableVoices
-                        .filter(v => ttsLanguage === 'all' || v.lang.split('-')[0].split('_')[0].toLowerCase() === ttsLanguage)
-                        .filter(v => v.name.toLowerCase().includes(ttsVoiceSearch.toLowerCase()) || v.lang.toLowerCase().includes(ttsVoiceSearch.toLowerCase()))
-                        .map(voice => (
+                      {availableVoices.map(voice => (
                           <button
                             key={voice.name}
                             onClick={() => {
@@ -1525,9 +1341,21 @@ export default function App() {
                           
                           const audio = new Audio(audioUrl);
                           (window as any)._settingsTestAudio = audio;
-                          audio.play().catch(err => {
-                            console.warn('[Settings Test] Cloud playback failed:', err);
-                          });
+                          const playOfflineFallback = () => {
+                            console.warn('[Settings Test] Cloud playback failed/offline, falling back to offline inbuilt voice.');
+                            const allLocal = window.speechSynthesis.getVoices();
+                            const isMale = voiceObj.name.toLowerCase().includes('william') || voiceObj.name.toLowerCase().includes('david') || voiceObj.name.toLowerCase().includes('male');
+                            const localVoice = allLocal.find(v => {
+                              const n = v.name.toLowerCase();
+                              return isMale ? (n.includes('david') || n.includes('mark') || n.includes('male'))
+                                            : (n.includes('zira') || n.includes('hazel') || n.includes('female'));
+                            }) ?? allLocal.find(v => v.lang.startsWith('en')) ?? allLocal[0];
+                            const utterance = new SpeechSynthesisUtterance(testText);
+                            if (localVoice) utterance.voice = localVoice;
+                            window.speechSynthesis.speak(utterance);
+                          };
+                          audio.onerror = playOfflineFallback;
+                          audio.play().catch(playOfflineFallback);
                           console.log('[Settings Test] ✅ Playing via Cloud Edge TTS:', voiceObj.name);
                         } else {
                           const nativeVoiceObj = window.speechSynthesis.getVoices().find(v => v.name === voiceObj.name);
@@ -1554,7 +1382,6 @@ export default function App() {
                         padding: '6px 14px',
                         fontSize: '11px',
                         fontWeight: 500,
-                        cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
                         gap: '6px',
@@ -1564,7 +1391,8 @@ export default function App() {
                       <span>▶</span> Test Selected Voice
                     </button>
                   </div>
-
+                </>
+              )}
 
                 </div>
               </div>
@@ -1642,7 +1470,7 @@ export default function App() {
                   if (app.hasWindow) {
                     toggleWindow(app.id);
                   } else {
-                    showToast(app.info || 'Service working silently in background.');
+                    showToast((app as any).info || 'Service working silently in background.');
                   }
                 }}
                 onHover={() => setHoveredApp(app.id)}

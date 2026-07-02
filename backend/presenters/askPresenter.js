@@ -23,7 +23,7 @@ export const handleAskRequest = async (req, res) => {
     console.log(`\n[API Ask Presenter] ► "${prompt}"`);
 
     // 1. Run LangGraph pipeline to classify intent and resolve tools
-    const state = await agentGraph.invoke({ prompt, messages: [] });
+    const state = await agentGraph.invoke({ prompt, deviceId: req.deviceId || 'DEV-DEFAULT', messages: [] });
     console.log(`[API Ask Presenter] Graph complete. needsUI=${state.needsUI}, messages=${state.messages.length}`);
 
     // 2. Write the metadata header (view-specific format)

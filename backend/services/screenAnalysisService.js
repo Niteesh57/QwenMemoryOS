@@ -29,9 +29,8 @@ Your job is to extract EVERY meaningful visual detail, action, and state from th
 RULES:
 1. Visual Description = Provide a detailed, vivid description of everything visible on the screen: open applications, UI layout, active code files/syntax, text visible on screen, themes, windows, and mouse movement patterns.
 2. Events = one-time timestamped actions or observations (opening apps, clicking buttons, typing, scrolling through sections, viewing specific headings/articles, terminal execution). Even if the user is just scrolling or reading a webpage, create distinct event objects for every section viewed or scrolled!
-3. States = long-lived facts about the user (current project, active page, UI theme, current coding language).
-4. DO NOT SUMMARIZE. Do not include any summary field. Store raw factual details directly.
-5. Use exact UI element names, headings, filenames, and text visible on screen. CRITICAL: Always identify the exact browser application (e.g. Chrome, Edge, Firefox), exact browser tab title and URL, and exact file directory/folder path when saving or opening files!
+3. DO NOT SUMMARIZE. Do not include any summary field. Store raw factual details directly.
+4. Use exact UI element names, headings, filenames, and text visible on screen. CRITICAL: Always identify the exact browser application (e.g. Chrome, Edge, Firefox), exact browser tab title and URL, and exact file directory/folder path when saving or opening files!
 
 Return ONLY valid JSON (no markdown, no code fences):
 {
@@ -47,16 +46,10 @@ Return ONLY valid JSON (no markdown, no code fences):
       "topic_tags": ["research", "gemini"]
     }
   ],
-  "states": [
-    {
-      "attribute": "CURRENT_PAGE",
-      "value": "AI Newsletter website",
-      "entity_name": "User"
-    }
-  ]
+  "states": []
 }
 
-Extract comprehensive visual details, granular events, and states. Be specific about everything you see. Return JSON only.`;
+Extract comprehensive visual details and granular events. Be specific about everything you see. Return JSON only.`;
 }
 
 // ─── Call Qwen via OpenAI Compatible Mode Streaming ──────────────────────────
@@ -118,7 +111,7 @@ async function callQwenVL(videoUrl, durationMinutes) {
 // ─── Parse and Store ──────────────────────────────────────────────────────────
 
 export async function analyzeAndStore(videoUrl, options = {}) {
-  const { durationMinutes = 10, sessionId = 'session', chunkTimestamp = new Date().toISOString() } = options;
+  const { durationMinutes = 10, sessionId = 'session', chunkTimestamp = new Date().toISOString(), deviceId = 'DEV-DEFAULT' } = options;
 
   let rawText;
   try {
@@ -133,7 +126,7 @@ export async function analyzeAndStore(videoUrl, options = {}) {
       source: 'screen',
       topic_tags: ['error', 'analysis'],
       timestamp: chunkTimestamp,
-    });
+    }, deviceId);
     return { events: [], states: [], summary: `Analysis failed: ${err.message}`, visual_description: '', storedCount: 0, error: err.message };
   }
 
@@ -173,7 +166,7 @@ export async function analyzeAndStore(videoUrl, options = {}) {
         topic_tags: ['visual_description', 'screen_context'],
         video_ref: { session_id: sessionId, video_url: videoUrl, offset_seconds: 0 },
         timestamp: chunkTimestamp,
-      });
+      }, deviceId);
       storedCount++;
     } catch (err) {
       console.warn('[Qwen-VL] Visual description store failed:', err.message);
@@ -192,27 +185,15 @@ export async function analyzeAndStore(videoUrl, options = {}) {
         topic_tags: Array.isArray(ev.topic_tags) ? ev.topic_tags : [],
         video_ref: { session_id: sessionId, video_url: videoUrl, offset_seconds: ev.offset_seconds || 0 },
         timestamp: eventTime,
-      });
+      }, deviceId);
       storedCount++;
     } catch (err) {
       console.warn('[Qwen-VL] Event store failed:', err.message);
     }
   }
 
-  for (const st of parsed.states || []) {
-    try {
-      await ingestState({
-        entity_name: st.entity_name || 'User',
-        attribute: st.attribute,
-        value: st.value,
-      });
-      storedCount++;
-    } catch (err) {
-      console.warn('[Qwen-VL] State store failed:', err.message);
-    }
-  }
-
-  console.log(`[Qwen-VL] Stored ${storedCount} records (${(parsed.events || []).length} events, ${(parsed.states || []).length} states, visual snapshot)`);
+  // Note: States are exclusively created from user voice/speech commands as requested by user.
+  console.log(`[Qwen-VL] Stored ${storedCount} records (${(parsed.events || []).length} events, visual snapshot)`);
 
   return {
     visual_description: parsed.visual_description || '',
