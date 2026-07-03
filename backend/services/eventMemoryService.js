@@ -31,7 +31,7 @@ const now = () => new Date().toISOString();
  * @param {string[]} event.topic_tags
  * @param {object}  event.video_ref - { video_id, timestamp_seconds }
  */
-export async function ingestEvent(event, deviceId = 'DEV-DEFAULT') {
+export async function ingestEvent(event) {
   const session = getSession();
   const id = uuidv4();
   const timestamp = event.timestamp || now();
@@ -41,7 +41,6 @@ export async function ingestEvent(event, deviceId = 'DEV-DEFAULT') {
       `CREATE (e:Event:Hot {
         id:           $id,
         timestamp:    $timestamp,
-        deviceId:     $deviceId,
         actor:        $actor,
         action:       $action,
         object:       $object,
@@ -56,7 +55,6 @@ export async function ingestEvent(event, deviceId = 'DEV-DEFAULT') {
       {
         id,
         timestamp,
-        deviceId,
         actor: event.actor || 'User',
         action: event.action || 'ACTION',
         object: event.object || '',
@@ -85,7 +83,7 @@ export async function ingestEvent(event, deviceId = 'DEV-DEFAULT') {
  * @param {string} state.attribute    - "WORKS_AT" | "WORKS_ON" | "USES_EDITOR"
  * @param {string} state.value        - "Company A" | "VS Code" | etc.
  */
-export async function ingestState(state, deviceId = 'DEV-DEFAULT') {
+export async function ingestState(state) {
   const session = getSession();
   const newId = uuidv4();
   const timestamp = now();
@@ -94,9 +92,8 @@ export async function ingestState(state, deviceId = 'DEV-DEFAULT') {
     // 1. Check for an existing present=true state for this attribute
     const existing = await session.run(
       `MATCH (s:State {attribute: $attribute, present: true})
-       WHERE s.deviceId = $deviceId OR s.deviceId IS NULL
        RETURN s`,
-      { attribute: state.attribute, deviceId }
+      { attribute: state.attribute }
     );
 
     if (existing.records.length > 0) {
@@ -119,17 +116,16 @@ export async function ingestState(state, deviceId = 'DEV-DEFAULT') {
 
     // 2. Ensure the Entity node exists (MERGE)
     await session.run(
-      `MERGE (n:Entity {name: $name, deviceId: $deviceId})
+      `MERGE (n:Entity {name: $name})
        ON CREATE SET n.id = $entity_id, n.type = 'Person'`,
-      { name: state.entity_name || 'User', deviceId, entity_id: uuidv4() }
+      { name: state.entity_name || 'User', entity_id: uuidv4() }
     );
 
     // 3. Create new present=true State
     const result = await session.run(
-      `MATCH (n:Entity {name: $entity_name, deviceId: $deviceId})
+      `MATCH (n:Entity {name: $entity_name})
        CREATE (s:State {
          id:         $id,
-         deviceId:   $deviceId,
          attribute:  $attribute,
          value:      $value,
          present:    true,
@@ -141,7 +137,6 @@ export async function ingestState(state, deviceId = 'DEV-DEFAULT') {
       {
         entity_name: state.entity_name || 'User',
         id: newId,
-        deviceId,
         attribute: state.attribute,
         value: state.value,
         timestamp,
@@ -168,7 +163,7 @@ export async function ingestState(state, deviceId = 'DEV-DEFAULT') {
  * @param {number} limit - Max candidates to return (default 30)
  * @returns {object[]} Array of Event node properties
  */
-export async function retrieveCandidates(queryText, topicTags = [], limit = 30, deviceId = 'DEV-DEFAULT') {
+export async function retrieveCandidates(queryText, topicTags = [], limit = 30) {
   const session = getSession();
   const accessedNow = now();
 
@@ -186,21 +181,18 @@ export async function retrieveCandidates(queryText, topicTags = [], limit = 30, 
     for (const tier of tierOrder) {
       const result = await session.run(
         `MATCH (e:Event {tier: $tier})
-         WHERE (e.deviceId = $deviceId OR e.deviceId IS NULL) AND (
-           any(kw IN $keywords WHERE
-             toLower(e.raw_content) CONTAINS kw OR
-             toLower(e.action) CONTAINS kw OR
-             toLower(e.object) CONTAINS kw OR
-             toLower(e.actor) CONTAINS kw
-           )
-           OR size($topicTags) > 0 AND any(t IN $topicTags WHERE t IN e.topic_tags)
+         WHERE any(kw IN $keywords WHERE
+           toLower(e.raw_content) CONTAINS kw OR
+           toLower(e.action) CONTAINS kw OR
+           toLower(e.object) CONTAINS kw OR
+           toLower(e.actor) CONTAINS kw
          )
+         OR size($topicTags) > 0 AND any(t IN $topicTags WHERE t IN e.topic_tags)
          RETURN e
          ORDER BY e.timestamp DESC
          LIMIT $limit`,
         {
           tier,
-          deviceId,
           keywords,
           topicTags,
           limit: neo4jInt(limit),
@@ -257,15 +249,13 @@ export async function retrieveCandidates(queryText, topicTags = [], limit = 30, 
 /**
  * Retrieve current active States (present=true).
  */
-export async function retrieveCurrentStates(deviceId = 'DEV-DEFAULT') {
+export async function retrieveCurrentStates() {
   const session = getSession();
   try {
     const result = await session.run(
       `MATCH (n:Entity)-[:HAS_STATE]->(s:State {present: true})
-       WHERE s.deviceId = $deviceId OR s.deviceId IS NULL
        RETURN n.name AS entity, s
-       ORDER BY s.attribute`,
-      { deviceId }
+       ORDER BY s.attribute`
     );
     return result.records.map((r) => ({
       entity: r.get('entity'),
@@ -279,15 +269,15 @@ export async function retrieveCurrentStates(deviceId = 'DEV-DEFAULT') {
 /**
  * Retrieve historical States (present=false).
  */
-export async function retrievePastStates(attribute = null, deviceId = 'DEV-DEFAULT') {
+export async function retrievePastStates(attribute = null) {
   const session = getSession();
   try {
     const result = await session.run(
       `MATCH (n:Entity)-[:HAS_STATE]->(s:State {present: false})
-       WHERE (s.deviceId = $deviceId OR s.deviceId IS NULL) AND ($attribute IS NULL OR s.attribute = $attribute)
+       WHERE $attribute IS NULL OR s.attribute = $attribute
        RETURN n.name AS entity, s
        ORDER BY s.valid_from DESC`,
-      { attribute, deviceId }
+      { attribute }
     );
     return result.records.map((r) => ({
       entity: r.get('entity'),
@@ -404,17 +394,16 @@ export async function runTierAging() {
 /**
  * Returns a snapshot of the current memory graph statistics.
  */
-export async function getMemoryStats(deviceId = 'DEV-DEFAULT') {
+export async function getMemoryStats() {
   const session = getSession();
   try {
     const result = await session.run(
-      `MATCH (hot:Event:Hot) WHERE hot.deviceId = $deviceId OR hot.deviceId IS NULL WITH count(hot) AS hotCount
-       MATCH (warm:Event:Warm) WHERE warm.deviceId = $deviceId OR warm.deviceId IS NULL WITH hotCount, count(warm) AS warmCount
-       MATCH (cold:Event:Cold) WHERE cold.deviceId = $deviceId OR cold.deviceId IS NULL WITH hotCount, warmCount, count(cold) AS coldCount
-       MATCH (s:State {present: true}) WHERE s.deviceId = $deviceId OR s.deviceId IS NULL WITH hotCount, warmCount, coldCount, count(s) AS activeStates
-       MATCH (s2:State {present: false}) WHERE s2.deviceId = $deviceId OR s2.deviceId IS NULL WITH hotCount, warmCount, coldCount, activeStates, count(s2) AS pastStates
-       RETURN hotCount, warmCount, coldCount, activeStates, pastStates`,
-      { deviceId }
+      `MATCH (hot:Event:Hot) WITH count(hot) AS hotCount
+       MATCH (warm:Event:Warm) WITH hotCount, count(warm) AS warmCount
+       MATCH (cold:Event:Cold) WITH hotCount, warmCount, count(cold) AS coldCount
+       MATCH (s:State {present: true}) WITH hotCount, warmCount, coldCount, count(s) AS activeStates
+       MATCH (s2:State {present: false}) WITH hotCount, warmCount, coldCount, activeStates, count(s2) AS pastStates
+       RETURN hotCount, warmCount, coldCount, activeStates, pastStates`
     );
 
     if (result.records.length === 0) {
@@ -423,29 +412,29 @@ export async function getMemoryStats(deviceId = 'DEV-DEFAULT') {
 
     const r = result.records[0];
     return {
-      hot:          r.get('hotCount').toNumber(),
-      warm:         r.get('warmCount').toNumber(),
-      cold:         r.get('coldCount').toNumber(),
+      hot: r.get('hotCount').toNumber(),
+      warm: r.get('warmCount').toNumber(),
+      cold: r.get('coldCount').toNumber(),
       activeStates: r.get('activeStates').toNumber(),
-      pastStates:   r.get('pastStates').toNumber(),
+      pastStates: r.get('pastStates').toNumber(),
     };
   } catch (err) {
     // Fallback if multiple MATCH patterns cause issues on Aura Free
-    return getMemoryStatsFallback(session, deviceId);
+    return getMemoryStatsFallback(session);
   } finally {
     await session.close();
   }
 }
 
-async function getMemoryStatsFallback(session, deviceId = 'DEV-DEFAULT') {
+async function getMemoryStatsFallback(session) {
   const s2 = getSession();
   try {
     const [hot, warm, cold, active, past] = await Promise.all([
-      s2.run(`MATCH (e:Event) WHERE e.tier = 'hot' AND (e.deviceId = $deviceId OR e.deviceId IS NULL) RETURN count(e) AS c`, { deviceId }),
-      s2.run(`MATCH (e:Event) WHERE e.tier = 'warm' AND (e.deviceId = $deviceId OR e.deviceId IS NULL) RETURN count(e) AS c`, { deviceId }),
-      s2.run(`MATCH (e:Event) WHERE e.tier = 'cold' AND (e.deviceId = $deviceId OR e.deviceId IS NULL) RETURN count(e) AS c`, { deviceId }),
-      s2.run(`MATCH (s:State {present: true}) WHERE s.deviceId = $deviceId OR s.deviceId IS NULL RETURN count(s) AS c`, { deviceId }),
-      s2.run(`MATCH (s:State {present: false}) WHERE s.deviceId = $deviceId OR s.deviceId IS NULL RETURN count(s) AS c`, { deviceId }),
+      s2.run(`MATCH (e:Event) WHERE e.tier = 'hot' RETURN count(e) AS c`),
+      s2.run(`MATCH (e:Event) WHERE e.tier = 'warm' RETURN count(e) AS c`),
+      s2.run(`MATCH (e:Event) WHERE e.tier = 'cold' RETURN count(e) AS c`),
+      s2.run(`MATCH (s:State {present: true}) RETURN count(s) AS c`),
+      s2.run(`MATCH (s:State {present: false}) RETURN count(s) AS c`),
     ]);
 
     const toN = (r) => r.records[0]?.get('c')?.toNumber() ?? 0;
@@ -462,17 +451,19 @@ async function getMemoryStatsFallback(session, deviceId = 'DEV-DEFAULT') {
  * Returns recent Event nodes for the Memory Book timeline view.
  * @param {number} days - How many past days to include (default 7)
  */
-export async function getTimelineEvents(days = 7, deviceId = 'DEV-DEFAULT') {
+export async function getTimelineEvents(days = 7, deviceId = 'DEV-DEFAULT', page = 1, limit = 200) {
   const session = getSession();
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
   try {
     const result = await session.run(
       `MATCH (e:Event)
-       WHERE e.timestamp >= $cutoff AND (e.deviceId = $deviceId OR e.deviceId IS NULL)
+       WHERE e.timestamp >= $cutoff AND e.deviceId = $deviceId
+         AND NOT e.action IN ['ANALYSIS_FAILED', 'VISUAL_SNAPSHOT', 'SCREEN_ANALYZED']
+         AND NOT e.actor IN ['System', 'Qwen-VL']
        RETURN e
        ORDER BY e.timestamp DESC
-       LIMIT 200`,
-      { cutoff, deviceId }
+       LIMIT $limit`,
+      { cutoff, deviceId, limit: neo4jInt(limit) }
     );
     return result.records.map((r) => r.get('e').properties);
   } finally {
@@ -490,7 +481,7 @@ const neo4jInt = (n) => neo4j.int(n);
  * favorite genres, current company/job). When a new state is ingested, any previous state
  * for that attribute is automatically invalidated (present = false).
  */
-export async function extractAndRecordUserStateFromVoice(prompt, deviceId = 'DEV-DEFAULT') {
+export async function extractAndRecordUserStateFromVoice(prompt) {
   if (!prompt || typeof prompt !== 'string' || prompt.length < 5) return [];
 
   // Fast check: if input is a question (ends with '?' or asks a question), do not extract/save states!
@@ -531,7 +522,7 @@ Otherwise return [].`;
             entity_name: 'User',
             attribute: item.attribute.toUpperCase(),
             value: String(item.value).trim()
-          }, deviceId);
+          });
           saved.push(stored);
         }
       }

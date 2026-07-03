@@ -73,6 +73,7 @@ export async function handleMemoryStatus(req, res) {
       currentStates: states,
       recentLog: ingestionLog.slice(0, 20),
       latestAnalysis,
+      chunkMinutes: parseFloat(process.env.QWEN_VL_CHUNK_MINUTES) || 10,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -91,7 +92,8 @@ export async function handleAgentChunk(req, res) {
 
     const rawBuffer = req.file.buffer;
     const originalName = req.file.originalname || `screen_${Date.now()}.webm`;
-    const durationMinutes = parseFloat(req.body?.duration_minutes) || 10;
+    const defaultDuration = parseFloat(process.env.QWEN_VL_CHUNK_MINUTES) || 10;
+    const durationMinutes = parseFloat(req.body?.duration_minutes) || defaultDuration;
     const sessionId = req.body?.session_id || `session_${Date.now()}`;
     const chunkTimestamp = req.body?.chunk_timestamp || new Date().toISOString();
 

@@ -15,9 +15,15 @@ export interface CompanionController {
   listening: boolean;
   toggleListening: () => void;
   openPip: () => void;
-  closePip: () => void;
   volume: number;
-  
+  visualMode: boolean;
+  toggleVisualMode: () => void;
+
+  // Memory Agent (parallel background recording)
+  memoryAgentRunning: boolean;
+  chunkMinutes: number;
+  setChunkMinutes: (minutes: number) => void;
+
   // Dynamic LLM Response States
   responseText: string;
   setResponseText: (text: string) => void;
@@ -43,6 +49,147 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
   const [isPipOpen, setIsPipOpen] = useState(false);
   const [assistantState, setAssistantState] = useState<VisualizerState>('idle');
   const [volume, setVolume] = useState(0);
+
+  // ── Visual mode & dual-stream buffers ───────────────────────────────────────
+  const [visualMode, setVisualMode] = useState<boolean>(false);
+  const visualStreamRef = useRef<MediaStream | null>(null);
+  const visualRecorderRef = useRef<MediaRecorder | null>(null);
+
+  // Buffer for Q&A visual queries (rolling last ~30 s)
+  const visualChunksRef = useRef<Blob[]>([]);
+
+  // Buffer for the memory/storage agent (accumulates between interval flushes)
+  const memoryChunksRef = useRef<Blob[]>([]);
+  const memoryIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [chunkMinutes, setChunkMinutes] = useState<number>(10);
+  const [memoryAgentRunning, setMemoryAgentRunning] = useState<boolean>(false);
+
+  // Stable ref so the interval callback always sees the latest chunkMinutes
+  const chunkMinutesRef = useRef<number>(chunkMinutes);
+  chunkMinutesRef.current = chunkMinutes;
+
+  // ── Fire-and-forget helper: flush memoryChunksRef to backend ────────────────
+  const flushMemoryChunk = (isStop = false) => {
+    if (memoryChunksRef.current.length === 0) return;
+
+    // Preserve container metadata by prepending the EBML header chunk
+    const header = visualChunksRef.current[0];
+    const chunksToUpload = [...memoryChunksRef.current];
+    if (header && !chunksToUpload.includes(header)) {
+      chunksToUpload.unshift(header);
+    }
+
+    const blob = new Blob(chunksToUpload, { type: 'video/webm' });
+    // Keep the header in the buffer for the next recording slice
+    memoryChunksRef.current = header ? [header] : [];
+    const filename = `mem_${Date.now()}.webm`;
+    const formData = new FormData();
+    formData.append('chunk', blob, filename);
+    formData.append('duration_minutes', String(chunkMinutesRef.current));
+    formData.append('session_id', `visual_session_${Date.now()}`);
+    formData.append('chunk_timestamp', new Date().toISOString());
+    // Fire-and-forget — do NOT await; must never block Q&A pipeline
+    fetch('http://localhost:3000/api/memory/agent/chunk', {
+      method: 'POST',
+      headers: getDeviceHeaders(),
+      body: formData,
+    })
+      .then(r => r.json())
+      .then(d => console.log(`[MemoryAgent] ${isStop ? 'Final' : 'Periodic'} chunk processed — ${d?.analysis?.storedCount ?? 0} records stored`))
+      .catch(err => console.warn('[MemoryAgent] Chunk upload error:', err.message));
+  };
+
+  // ── Start periodic memory interval ──────────────────────────────────────────
+  const startMemoryInterval = () => {
+    if (memoryIntervalRef.current) clearInterval(memoryIntervalRef.current);
+    memoryIntervalRef.current = setInterval(() => {
+      flushMemoryChunk(false);
+    }, chunkMinutesRef.current * 60 * 1000);
+    console.log(`[MemoryAgent] Periodic flush every ${chunkMinutesRef.current} min started.`);
+  };
+
+  // ── Stop memory interval and tear down ──────────────────────────────────────
+  const stopMemoryInterval = (sendFinalChunk = true) => {
+    if (memoryIntervalRef.current) {
+      clearInterval(memoryIntervalRef.current);
+      memoryIntervalRef.current = null;
+    }
+    if (sendFinalChunk) flushMemoryChunk(true);
+    memoryChunksRef.current = [];
+    setMemoryAgentRunning(false);
+    fetch('http://localhost:3000/api/memory/stop', { method: 'POST' }).catch(() => {});
+    console.log('[MemoryAgent] Stopped.');
+  };
+
+  const toggleVisualMode = async () => {
+    if (visualMode) {
+      // ── DISABLE: stop recorder, stop memory agent ──────────────────────────
+      stopMemoryInterval(true); // send final chunk before stopping
+      if (visualRecorderRef.current) {
+        visualRecorderRef.current.stop();
+        visualRecorderRef.current = null;
+      }
+      if (visualStreamRef.current) {
+        visualStreamRef.current.getTracks().forEach(t => t.stop());
+        visualStreamRef.current = null;
+      }
+      visualChunksRef.current = [];
+      setVisualMode(false);
+      console.log('[Companion Visual] Visual mode stopped.');
+    } else {
+      try {
+        const stream = await (navigator.mediaDevices as MediaDevices & {
+          getDisplayMedia(opts: object): Promise<MediaStream>;
+        }).getDisplayMedia({
+          video: { frameRate: { ideal: 5, max: 10 }, width: { ideal: 1280 } },
+          audio: false,
+        });
+        visualStreamRef.current = stream;
+
+        const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+        visualRecorderRef.current = recorder;
+        visualChunksRef.current = [];
+        memoryChunksRef.current = [];
+
+        // ── Single ondataavailable feeds BOTH pipelines ───────────────────────
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) {
+            // Q&A pipeline: keep header chunk + rolling last ~30 s (30 chunks @ 1s each)
+            visualChunksRef.current.push(e.data);
+            if (visualChunksRef.current.length > 30) {
+              visualChunksRef.current.splice(1, 1); // keep index 0 (EBML header)
+            }
+            // Memory agent pipeline: unbounded accumulation until interval flush
+            memoryChunksRef.current.push(e.data);
+          }
+        };
+
+        recorder.start(1000);
+        setVisualMode(true);
+        setIsPipOpen(true);
+        if (!listening) {
+          SpeechRecognition.startListening({ continuous: true, language: 'en-US' });
+          setAssistantState('listening');
+        }
+
+        // ── Start background memory agent ──────────────────────────────────────
+        fetch('http://localhost:3000/api/memory/start', { method: 'POST' }).catch(() => {});
+        setMemoryAgentRunning(true);
+        startMemoryInterval();
+
+        console.log('[Companion Visual] Dual-stream started: Q&A + Memory Agent both active.');
+
+        // If user stops screen share from browser UI, clean up both pipelines
+        stream.getVideoTracks()[0].addEventListener('ended', () => {
+          stopMemoryInterval(true);
+          setVisualMode(false);
+          visualChunksRef.current = [];
+        });
+      } catch (err) {
+        console.warn('[Companion Visual] Screen share permission denied or cancelled:', err);
+      }
+    }
+  };
 
   // PiP Sizing
   const [pipWidth, setPipWidth] = useState(180);
@@ -276,6 +423,12 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
 
       const playOfflineFallback = () => {
         console.warn('[Cloud TTS] Cloud audio failed/offline. Automatically falling back to offline inbuilt voice.');
+        if (activeAudioRef.current) {
+          try {
+            activeAudioRef.current.pause();
+          } catch (_) {}
+          activeAudioRef.current = null;
+        }
         const allLocal = window.speechSynthesis.getVoices();
         const isMale = selectedVoice.name.toLowerCase().includes('william') || selectedVoice.name.toLowerCase().includes('david') || selectedVoice.name.toLowerCase().includes('male');
         const localVoice = allLocal.find(v => {
@@ -413,9 +566,16 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
     }
   };
 
-  // Attempt auto-connect to Qwen Memory OS MCP server on mount
+  // Sync default chunkMinutes config from backend memory status on mount
   useEffect(() => {
-    mcpClientService.connect('http://localhost:3000/sse').catch(() => {});
+    fetch('http://localhost:3000/api/memory/status')
+      .then(r => r.json())
+      .then(d => {
+        if (d && typeof d.chunkMinutes === 'number') {
+          setChunkMinutes(d.chunkMinutes);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   // Audio analyser effect
@@ -576,12 +736,27 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
     SpeechRecognition.stopListening();
 
     try {
-      console.log(`[Voice API Stream Ask] Sending prompt: "${query}"`);
-      const res = await fetch('http://localhost:3000/api/ask', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getDeviceHeaders() },
-        body: JSON.stringify({ prompt: query }),
-      });
+      let res: Response;
+      if (visualMode && visualChunksRef.current.length > 0) {
+        console.log(`[Voice API Stream Ask] Sending prompt with dual-stream visual query snippet: "${query}"`);
+        const blob = new Blob(visualChunksRef.current, { type: 'video/webm' });
+        const formData = new FormData();
+        formData.append('prompt', query);
+        formData.append('visual_chunk', blob, `screen_query_${Date.now()}.webm`);
+
+        res = await fetch('http://localhost:3000/api/ask/visual', {
+          method: 'POST',
+          headers: getDeviceHeaders(),
+          body: formData,
+        });
+      } else {
+        console.log(`[Voice API Stream Ask] Sending prompt: "${query}"`);
+        res = await fetch('http://localhost:3000/api/ask', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...getDeviceHeaders() },
+          body: JSON.stringify({ prompt: query }),
+        });
+      }
 
       if (!res.ok) {
         throw new Error(`Server returned error status: ${res.status}`);
@@ -834,6 +1009,13 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
     openPip,
     closePip,
     volume,
+    visualMode,
+    toggleVisualMode,
+
+    // Memory Agent
+    memoryAgentRunning,
+    chunkMinutes,
+    setChunkMinutes,
     
     // Dynamic LLM Response
     responseText,

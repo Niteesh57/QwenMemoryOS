@@ -118,15 +118,6 @@ export async function analyzeAndStore(videoUrl, options = {}) {
     rawText = await callQwenVL(videoUrl, durationMinutes);
   } catch (err) {
     console.error('[Qwen-VL] API call failed:', err.message);
-    await ingestEvent({
-      actor: 'System',
-      action: 'ANALYSIS_FAILED',
-      object: videoUrl,
-      raw_content: `Qwen3-VL analysis failed: ${err.message}`,
-      source: 'screen',
-      topic_tags: ['error', 'analysis'],
-      timestamp: chunkTimestamp,
-    }, deviceId);
     return { events: [], states: [], summary: `Analysis failed: ${err.message}`, visual_description: '', storedCount: 0, error: err.message };
   }
 
@@ -135,18 +126,10 @@ export async function analyzeAndStore(videoUrl, options = {}) {
     const clean = rawText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
     parsed = JSON.parse(clean);
   } catch (_) {
-    console.warn('[Qwen-VL] JSON parse failed, storing raw content as single event');
+    console.warn('[Qwen-VL] JSON parse failed, skip saving event');
     parsed = {
       visual_description: rawText,
-      events: [{
-        offset_seconds: 0,
-        actor: 'System',
-        action: 'SCREEN_ANALYZED',
-        object: `Recording ${sessionId}`,
-        raw_content: rawText,
-        source: 'screen',
-        topic_tags: ['analysis'],
-      }],
+      events: [],
       states: [],
       summary: rawText.slice(0, 200),
     };
@@ -155,25 +138,9 @@ export async function analyzeAndStore(videoUrl, options = {}) {
   const chunkBase = new Date(chunkTimestamp).getTime();
   let storedCount = 0;
 
-  if (parsed.visual_description) {
-    try {
-      await ingestEvent({
-        actor: 'Qwen-VL',
-        action: 'VISUAL_SNAPSHOT',
-        object: `Screen Session ${sessionId}`,
-        raw_content: parsed.visual_description,
-        source: 'screen',
-        topic_tags: ['visual_description', 'screen_context'],
-        video_ref: { session_id: sessionId, video_url: videoUrl, offset_seconds: 0 },
-        timestamp: chunkTimestamp,
-      }, deviceId);
-      storedCount++;
-    } catch (err) {
-      console.warn('[Qwen-VL] Visual description store failed:', err.message);
-    }
-  }
-
   for (const ev of parsed.events || []) {
+    // Only save video events, do not save internal interval/system error events
+    if (!ev || ev.action === 'ANALYSIS_FAILED' || ev.action === 'VISUAL_SNAPSHOT' || ev.action === 'SCREEN_ANALYZED') continue;
     try {
       const eventTime = new Date(chunkBase + (ev.offset_seconds || 0) * 1000).toISOString();
       await ingestEvent({
@@ -193,7 +160,7 @@ export async function analyzeAndStore(videoUrl, options = {}) {
   }
 
   // Note: States are exclusively created from user voice/speech commands as requested by user.
-  console.log(`[Qwen-VL] Stored ${storedCount} records (${(parsed.events || []).length} events, visual snapshot)`);
+  console.log(`[Qwen-VL] Stored ${storedCount} video events`);
 
   return {
     visual_description: parsed.visual_description || '',

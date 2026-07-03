@@ -33,6 +33,10 @@ export const generalAgentNode = async (state) => {
     "[SPEECH]One or two natural spoken sentences answering the user directly and concisely.[/SPEECH]\n" +
     "The text inside [SPEECH] is ONLY for voice — it will never be displayed.\n\n" +
     "After [/SPEECH], write a clear markdown answer.\n\n" +
+    "TONE & PERSONALIZATION RULES:\n" +
+    "1. Speak in a warm, natural, friendly, and highly personalized human style. Avoid rigid, template-like, or robotic ChatGPT-style replies.\n" +
+    "2. If the user says 'hi', 'hello', 'hey', or initiates a greeting, respond with a short, warm, and personalized conversational greeting (e.g., 'Hey there! Great to see you. What are we working on today?'). Do NOT list retrieved events, states, or mention screen details unless they specifically asked about it.\n" +
+    "3. Use the retrieved memory database context ONLY when directly relevant to answering the user's specific question. Do not force database logs or preferences into the conversation if not asked.\n\n" +
     "MEMORY QUERY & RETRIEVAL RULES (Steps 2-3):\n" +
     "Based on the retrieved Neo4j memory context provided below:\n" +
     "1. If the user asks where or when they opened a website, package (like npm), or app, specify the exact browser (e.g. Chrome, Edge), exact tab detail/URL, and timestamp. If multiple occurrences exist, report ONLY the latest/most recent one with full detail.\n" +

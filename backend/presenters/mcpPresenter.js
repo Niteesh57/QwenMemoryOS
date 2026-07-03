@@ -4,7 +4,16 @@ import { z } from "zod";
 import { openai, MODEL_NAME } from "../models/clients.js";
 import { renderHtmlResult, renderNotFound } from "../views/htmlView.js";
 
+// Bounded result store — purge oldest when > MAX_RESULTS entries
+const MAX_RESULTS = 50;
 const resultStorage = new Map();
+function storeResult(id, html) {
+  if (resultStorage.size >= MAX_RESULTS) {
+    // Delete the oldest entry (first key in insertion order)
+    resultStorage.delete(resultStorage.keys().next().value);
+  }
+  resultStorage.set(id, html);
+}
 const transports = {};
 
 /**
@@ -38,7 +47,7 @@ export const createMcpServer = () => {
       });
       const answer = resp.choices[0].message.content || "";
       const id = Date.now().toString();
-      resultStorage.set(id, renderHtmlResult(answer));
+      storeResult(id, renderHtmlResult(answer));
       return {
         content: [{ type: "text", text: answer }],
         _meta: { ui: { resourceUri: `ui://qwen-memory-os/ask_qwen_result/${id}` } },

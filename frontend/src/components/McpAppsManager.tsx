@@ -53,8 +53,10 @@ export const McpAppsManager: React.FC = () => {
       setMcpError(error);
     });
     return unsubscribe;
+    // ✅ No auto-connect here — MCP connects only on explicit user action
   }, []);
 
+  // ✅ Only called when the user explicitly clicks Connect / Retry
   const connectToServer = async (url: string) => {
     try {
       await mcpClientService.connect(url);
@@ -62,12 +64,6 @@ export const McpAppsManager: React.FC = () => {
       console.warn('[MCP Client] Connection verification failed:', err);
     }
   };
-
-  useEffect(() => {
-    if (active.mode === 'server' && active.serverUrl) {
-      connectToServer(active.serverUrl);
-    }
-  }, [activeId]);
 
   return (
     <div style={{ display: 'flex', width: '100%', height: '100%', overflow: 'hidden', background: '#09090b', color: '#f8fafc', fontFamily: "'Outfit', sans-serif" }}>
@@ -147,13 +143,19 @@ export const McpAppsManager: React.FC = () => {
             }}>
               {connectionStatus === 'connected' ? (
                 <>
-                  <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: 'rgba(16,185,129,0.15)', display: 'flex', alignItems: 'center', justifycontent: 'center', color: '#10b981', fontSize: '32px', marginBottom: '20px', boxShadow: '0 0 20px rgba(16,185,129,0.2)' }}>
+                  <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: 'rgba(16,185,129,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', fontSize: '32px', marginBottom: '20px', boxShadow: '0 0 20px rgba(16,185,129,0.2)' }}>
                     🟢
                   </div>
                   <h3 style={{ fontSize: '18px', fontWeight: 700, margin: '0 0 10px 0', color: '#34d399' }}>MCP Tool: Connected</h3>
-                  <p style={{ fontSize: '12.5px', color: '#94a3b8', lineHeight: 1.6, margin: 0 }}>
-                    The backend connection to your Qwen Memory OS local server is active. Voice transcript queries will be dispatched to the LLM and dynamic components will render in your picture-in-picture companion.
+                  <p style={{ fontSize: '12.5px', color: '#94a3b8', lineHeight: 1.6, margin: '0 0 20px 0' }}>
+                    Backend connection to the Qwen Memory OS local server is active. Voice queries will be dispatched to the LLM.
                   </p>
+                  <button
+                    onClick={() => mcpClientService.disconnect()}
+                    style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: '#f87171', padding: '8px 18px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    Disconnect
+                  </button>
                 </>
               ) : connectionStatus === 'connecting' ? (
                 <>
@@ -167,21 +169,26 @@ export const McpAppsManager: React.FC = () => {
                 </>
               ) : (
                 <>
-                  <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: 'rgba(239,68,68,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ef4444', fontSize: '32px', marginBottom: '20px', boxShadow: '0 0 20px rgba(239,68,68,0.2)' }}>
-                    ❌
+                  <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: 'rgba(99,102,241,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '32px', marginBottom: '20px' }}>
+                    🔌
                   </div>
-                  <h3 style={{ fontSize: '18px', fontWeight: 700, margin: '0 0 10px 0', color: '#ef4444' }}>Access Denied / Disconnected</h3>
-                  <p style={{ fontSize: '12.5px', color: '#94a3b8', lineHeight: 1.6, marginBottom: '24px' }}>
-                    The Qwen Memory OS backend is not running on port 3000. Start the server from your terminal:
+                  <h3 style={{ fontSize: '18px', fontWeight: 700, margin: '0 0 8px 0', color: '#e2e8f0' }}>MCP Server — Not Connected</h3>
+                  <p style={{ fontSize: '12.5px', color: '#94a3b8', lineHeight: 1.6, marginBottom: '12px' }}>
+                    Click <strong style={{ color: '#818cf8' }}>Connect</strong> to link this panel to your local Qwen backend.
                   </p>
-                  <code style={{ display: 'block', width: '100%', background: '#000', color: '#34d399', padding: '10px', borderRadius: '8px', fontSize: '11px', fontFamily: 'monospace', border: '1px solid rgba(255,255,255,0.05)', marginBottom: '24px' }}>
+                  <code style={{ display: 'block', width: '100%', background: '#000', color: '#34d399', padding: '10px', borderRadius: '8px', fontSize: '11px', fontFamily: 'monospace', border: '1px solid rgba(255,255,255,0.05)', marginBottom: '20px' }}>
                     node server.js
                   </code>
+                  {mcpError && (
+                    <p style={{ fontSize: '11px', color: '#ef4444', marginBottom: '16px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px', padding: '8px 12px' }}>
+                      {mcpError}
+                    </p>
+                  )}
                   <button
-                    onClick={() => connectToServer(active.serverUrl)}
-                    style={{ background: 'linear-gradient(90deg, #6366f1, #8b5cf6)', border: 'none', color: '#fff', padding: '10px 20px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', boxShadow: '0 4px 15px rgba(99,102,241,0.3)' }}
+                    onClick={() => connectToServer(active.serverUrl!)}
+                    style={{ background: 'linear-gradient(90deg, #6366f1, #8b5cf6)', border: 'none', color: '#fff', padding: '11px 28px', borderRadius: '9px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 20px rgba(99,102,241,0.4)', letterSpacing: '0.02em' }}
                   >
-                    Retry Connection
+                    🔗 Connect to Server
                   </button>
                 </>
               )}

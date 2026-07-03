@@ -19,35 +19,32 @@ export const PipPortal: React.FC<PipPortalProps> = ({
   isOpen,
   onClose,
   children,
-  width = 360,
-  height = 420,
+  width: _width = 300,
+  height: _height = 200,
   isSpeaking = true,
   onPipDocumentReady,
 }) => {
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const pipWindowRef = useRef<any | null>(null);
 
-  // Monitor dynamic width, height, and isSpeaking changes
+  // Only update body style when isSpeaking changes — no dynamic resizeTo()
   useEffect(() => {
-    if (pipWindowRef.current) {
-      try {
-        pipWindowRef.current.resizeTo(width, height);
-        if (isSpeaking) {
-          pipWindowRef.current.document.body.style.background = 'rgba(8, 8, 16, 0.72)';
-          pipWindowRef.current.document.body.style.backdropFilter = 'blur(24px)';
-          pipWindowRef.current.document.body.style.webkitBackdropFilter = 'blur(24px)';
-        } else {
-          pipWindowRef.current.document.body.style.background = 'transparent';
-          pipWindowRef.current.document.body.style.backdropFilter = 'none';
-          pipWindowRef.current.document.body.style.webkitBackdropFilter = 'none';
-        }
-      } catch (e: any) {
-        if (e && e.name !== 'NotAllowedError') {
-          console.warn('[PiP Portal] Dynamic resize blocked by browser:', e);
-        }
+    if (!pipWindowRef.current) return;
+    try {
+      if (isSpeaking) {
+        pipWindowRef.current.document.body.style.background = 'rgba(8, 8, 16, 0.72)';
+        pipWindowRef.current.document.body.style.backdropFilter = 'blur(24px)';
+        pipWindowRef.current.document.body.style.webkitBackdropFilter = 'blur(24px)';
+      } else {
+        pipWindowRef.current.document.body.style.background = 'transparent';
+        pipWindowRef.current.document.body.style.backdropFilter = 'none';
+        pipWindowRef.current.document.body.style.webkitBackdropFilter = 'none';
       }
+    } catch (e: any) {
+      // PiP window may have been closed
     }
-  }, [width, height, isSpeaking]);
+  }, [isSpeaking]); // ✅ Only isSpeaking — no more dynamic resizeTo()
+
 
   useEffect(() => {
     if (!isOpen) {
@@ -63,9 +60,12 @@ export const PipPortal: React.FC<PipPortalProps> = ({
 
     const openPipWindow = async () => {
       try {
+        // Open at a fixed compact size — user can manually resize in browser native PiP
+        const PIP_W = 300;
+        const PIP_H = 200;
         const pipWindow = await (window as any).documentPictureInPicture.requestWindow({
-          width,
-          height,
+          width: PIP_W,
+          height: PIP_H,
         });
 
         pipWindowRef.current = pipWindow;

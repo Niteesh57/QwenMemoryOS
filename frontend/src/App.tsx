@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { PipPortal, isPipSupported } from './components/PipPortal';
 import { VoiceCompanionBar, CodeBlock, parseResponseText, MarkdownBlock } from './components/VoiceCompanionBar';
 import { VoiceVisualizer } from './components/VoiceVisualizer';
@@ -8,7 +8,7 @@ import { MeshGradientBackground } from './components/MeshGradientBackground';
 import { McpAppsManager } from './components/McpAppsManager';
 import { MemoryBookManager } from './components/MemoryBookManager';
 import { DevicePairingSettings } from './components/DevicePairingSettings';
-import { Battery, Wifi, Mic, MicOff, Tv, Bot, User } from 'lucide-react';
+import { Battery, Wifi, Mic, MicOff, Tv, Bot, User, Monitor } from 'lucide-react';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const MAG_RANGE = 130;
@@ -119,6 +119,20 @@ const SettingsIcon = () => (
   </svg>
 );
 
+// ─── Isolated Clock Component (prevents full App re-render every second) ───────
+const Clock: React.FC = () => {
+  const [time, setTime] = useState(
+    () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  );
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    }, 10000); // update every 10s — clock shows HH:MM, minute-resolution is enough
+    return () => clearInterval(timer);
+  }, []);
+  return <span style={{ fontWeight: 600 }}>{time}</span>;
+};
+
 // ─── Mac Window Wrapper ───────────────────────────────────────────────────────
 interface WindowWrapperProps {
   appId: string;
@@ -144,7 +158,7 @@ const MacWindow: React.FC<WindowWrapperProps> = ({
   if (!isOpen) return null;
 
   const width = appId === 'vscode' ? 760 : appId === 'history' ? 780 : appId === 'mcp' ? 820 : appId === 'memory' ? 860 : appId === 'settings' ? 740 : 540;
-  const height = appId === 'vscode' ? 490 : appId === 'history' ? 480 : appId === 'mcp' ? 520 : appId === 'aichat' ? 220 : appId === 'memory' ? 580 : appId === 'settings' ? 560 : 430;
+  const height = appId === 'vscode' ? 490 : appId === 'history' ? 480 : appId === 'mcp' ? 520 : appId === 'aichat' ? 310 : appId === 'memory' ? 580 : appId === 'settings' ? 560 : 430;
 
   return (
     <motion.div
@@ -441,7 +455,7 @@ export default function App() {
   
   // Window states
   const [openWindows, setOpenWindows] = useState<Record<string, boolean>>({
-    aichat: true, // open AI Chat by default
+    aichat: false, // not auto-opened — reduces startup render pressure
     history: false,
     vscode: false,
     mcp: false,
@@ -566,16 +580,7 @@ export default function App() {
   // Hover state for Tooltips
   const [hoveredApp, setHoveredApp] = useState<string | null>(null);
 
-  // Time state for top bar
-  const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
+  // ─── showToast ───────────────────────────────────────────────────────────────
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => {
@@ -664,7 +669,7 @@ export default function App() {
           <span style={{ display: 'flex', alignItems: 'center', opacity: 0.8 }}>
             <Wifi size={13} />
           </span>
-          <span style={{ fontWeight: 600 }}>{currentTime}</span>
+          <Clock />
         </div>
       </div>
 
@@ -778,6 +783,76 @@ export default function App() {
                         </span>
                       </button>
                     </div>
+
+                    <button
+                      onClick={controller.toggleVisualMode}
+                      style={{
+                        width: '100%',
+                        background: controller.visualMode ? 'rgba(168, 85, 247, 0.22)' : 'rgba(255, 255, 255, 0.04)',
+                        border: controller.visualMode ? '1px solid rgba(168, 85, 247, 0.45)' : '1px solid rgba(255, 255, 255, 0.1)',
+                        color: controller.visualMode ? '#d8b4fe' : '#94a3b8',
+                        padding: '10px 14px',
+                        borderRadius: '10px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', justifyContent: 'center', width: '100%' }}>
+                        <Monitor size={14} /> {controller.visualMode ? '🎙️+🖥️ Visual Query Active (Dual-Stream)' : '🎙️+🖥️ Enable Mic & Visuals'}
+                      </span>
+                    </button>
+
+                    {/* Memory Agent Status — shown when visual mode is on */}
+                    {controller.visualMode && (
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        background: controller.memoryAgentRunning
+                          ? 'rgba(239, 68, 68, 0.08)'
+                          : 'rgba(255,255,255,0.03)',
+                        border: controller.memoryAgentRunning
+                          ? '1px solid rgba(239, 68, 68, 0.25)'
+                          : '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: '9px',
+                        padding: '8px 12px',
+                        gap: '8px',
+                      }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', fontSize: '11px', fontWeight: 600, color: controller.memoryAgentRunning ? '#f87171' : '#64748b' }}>
+                          {/* Pulsing recording dot */}
+                          <span style={{
+                            width: '7px', height: '7px', borderRadius: '50%',
+                            background: controller.memoryAgentRunning ? '#ef4444' : '#475569',
+                            display: 'inline-block',
+                            animation: controller.memoryAgentRunning ? 'pulse-dot 1.2s ease-in-out infinite' : 'none',
+                          }} />
+                          <style>{`@keyframes pulse-dot { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(1.4)} }`}</style>
+                          {controller.memoryAgentRunning ? '🧠 Memory Agent Recording' : 'Memory Agent Idle'}
+                        </span>
+                        {/* Chunk interval selector */}
+                        <select
+                          value={controller.chunkMinutes}
+                          onChange={e => controller.setChunkMinutes(Number(e.target.value))}
+                          style={{
+                            background: '#1e1d2e',
+                            border: '1px solid rgba(255,255,255,0.12)',
+                            borderRadius: '6px',
+                            color: '#f8fafc',
+                            padding: '3px 6px',
+                            fontSize: '10px',
+                            colorScheme: 'dark',
+                            cursor: 'pointer',
+                          }}
+                          title="Memory chunk interval"
+                        >
+                          {[1, 2, 5, 10, 15, 30].map(m => (
+                            <option key={m} value={m} style={{ background: '#1e1d2e' }}>{m} min</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                   </div>
                 </div>
 

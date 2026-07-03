@@ -4,7 +4,7 @@ import multer from "multer";
 import path from "path";
 import { fileURLToPath } from "url";
 import "./env.js";
-import { handleAskRequest } from "./presenters/askPresenter.js";
+import { handleAskRequest, handleAskVisualRequest } from "./presenters/askPresenter.js";
 import { handleSseConnection, handlePostMessage } from "./presenters/mcpPresenter.js";
 import { handleClarifyRequest } from "./presenters/clarifyPresenter.js";
 import { handleGetVoices, handleSpeakStream } from "./presenters/ttsPresenter.js";
@@ -56,6 +56,7 @@ app.post("/messages", handlePostMessage);
 
 // ─── Main Ask API ──────────────────────────────────────────────────────
 app.post("/api/ask", handleAskRequest);
+app.post("/api/ask/visual", upload.single("visual_chunk"), handleAskVisualRequest);
 app.post("/api/clarify", handleClarifyRequest);
 
 // ─── Device ID & 2-Minute OTP Pairing APIs ─────────────────────────────

@@ -16,15 +16,23 @@ export const ChatGptVoiceOrb: React.FC<{ volume: number; state: VisualizerState;
   const volumeRef = React.useRef(volume);
   volumeRef.current = volume;
 
+  const stateRef = React.useRef(state);
+  stateRef.current = state;
+
   useEffect(() => {
     let animId: number;
     const rotate = () => {
+      // ✅ Pause animation when idle — no RAF cost when mic is off
+      if (stateRef.current === 'idle') {
+        animId = requestAnimationFrame(rotate);
+        return;
+      }
       setRotation((prev) => (prev + 1.2 + volumeRef.current * 0.05) % 360);
       animId = requestAnimationFrame(rotate);
     };
     rotate();
     return () => cancelAnimationFrame(animId);
-  }, []); // ✅ Empty deps — runs once, reads volume via ref
+  }, []); // ✅ Empty deps — runs once, reads state + volume via refs
 
   // Generate organic border radius based on volume and rotation
   const vFactor = volume / 100; // 0 to 1
@@ -118,7 +126,8 @@ export const ChatGptVoiceOrb: React.FC<{ volume: number; state: VisualizerState;
           height: '54%',
           borderRadius: '50%',
           background: 'rgba(12, 10, 24, 0.85)',
-          backdropFilter: 'blur(8px)',
+          // Only apply expensive backdropFilter when active
+          backdropFilter: state !== 'idle' ? 'blur(6px)' : 'none',
           border: '1px solid rgba(255, 255, 255, 0.16)',
           display: 'flex',
           alignItems: 'center',

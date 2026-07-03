@@ -98,33 +98,18 @@ const fmtDuration = (secs: number) => `${Math.floor(secs / 60).toString().padSta
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export function MemoryBookManager() {
-  const [activeTab, setActiveTab] = useState<'capture' | 'book' | 'states'>('capture');
+  const [activeTab, setActiveTab] = useState<'book' | 'states' | 'ingest'>('book');
 
   // ── Neo4j / backend state ──────────────────────────────────────────────────
   const [neo4jOk, setNeo4jOk] = useState(false);
+  const [agentRunning, setAgentRunning] = useState(false);
   const [stats, setStats] = useState<MemoryStats>({ hot: 0, warm: 0, cold: 0, activeStates: 0, pastStates: 0 });
   const [timeline, setTimeline] = useState<MemoryEvent[]>([]);
+  const [timelinePage, setTimelinePage] = useState(1);
   const [currentStates, setCurrentStates] = useState<MemoryState[]>([]);
   const [pastStates, setPastStates] = useState<MemoryState[]>([]);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [latestAnalysis, setLatestAnalysis] = useState<{ summary: string; visual_description?: string; eventCount: number; stateCount: number; analyzedAt: string } | null>(null);
-
-  // ── Screen capture state ───────────────────────────────────────────────────
-  const [isCapturing, setIsCapturing] = useState(false);
-  const [captureError, setCaptureError] = useState<string | null>(null);
-  const [chunkSecs, setChunkSecs] = useState(DEFAULT_CHUNK_MINUTES * 60); // countdown
-  const [totalElapsed, setTotalElapsed] = useState(0);
-  const [chunkCount, setChunkCount] = useState(0);
-  const [chunkMinutes, setChunkMinutes] = useState(DEFAULT_CHUNK_MINUTES);
-  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'analyzing' | 'done' | 'error'>('idle');
-  const [uploadMsg, setUploadMsg] = useState('');
-
-  const previewVideoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const sessionId = useRef(`session_${Date.now()}`);
 
   // ── Ingest state ───────────────────────────────────────────────────────────
   const [ingestType, setIngestType] = useState<'event' | 'state'>('event');
@@ -138,6 +123,7 @@ export function MemoryBookManager() {
       const r = await fetch(`${API}/api/memory/status`, { headers: getDeviceHeaders() });
       const d = await r.json();
       setNeo4jOk(d.neo4j?.connected ?? false);
+      setAgentRunning(d.agentRunning ?? false);
       setStats(d.stats ?? stats);
       setLog(d.recentLog ?? []);
       if (d.currentStates) setCurrentStates(d.currentStates);
@@ -174,134 +160,6 @@ export function MemoryBookManager() {
     if (activeTab === 'book') fetchTimeline();
   }, [activeTab]);
 
-  // ─── Screen Capture ───────────────────────────────────────────────────────────
-
-  const sendChunk = useCallback(async () => {
-    if (chunksRef.current.length === 0) return;
-
-    // Send valid browser stream buffer; backend converts to pristine H.264 MP4 before saving
-    const blob = new Blob(chunksRef.current, { type: 'video/webm' });
-    chunksRef.current = [];
-    const filename = `screen_${Date.now()}.webm`;
-
-    setUploadStatus('uploading');
-    setUploadMsg(`Uploading ${(blob.size / 1024 / 1024).toFixed(1)} MB stream to backend for MP4 packaging…`);
-
-    try {
-      const formData = new FormData();
-      formData.append('chunk', blob, filename);
-      formData.append('duration_minutes', String(chunkMinutes));
-      formData.append('session_id', sessionId.current);
-      formData.append('chunk_timestamp', new Date().toISOString());
-
-      setUploadStatus('analyzing');
-      setUploadMsg('Packaging into MP4 & uploading to Supabase. Qwen3-VL is analyzing visual context & events…');
-
-      const r = await fetch(`${API}/api/memory/agent/chunk`, { method: 'POST', headers: getDeviceHeaders(), body: formData });
-      const d = await r.json();
-
-      if (d.ok) {
-        setChunkCount(c => c + 1);
-        setLatestAnalysis({ ...d.analysis, analyzedAt: new Date().toISOString() });
-        setUploadStatus('done');
-        setUploadMsg(`✓ Saved MP4 & stored ${d.analysis.storedCount} records — "${(d.analysis.summary || '').slice(0, 80)}"`);
-        await fetchStatus();
-        await fetchTimeline();
-      } else {
-        throw new Error(d.error || 'Unknown error');
-      }
-    } catch (err: unknown) {
-      setUploadStatus('error');
-      setUploadMsg(`✗ ${err instanceof Error ? err.message : 'Upload failed'}`);
-    }
-
-    // Reset status after 5s
-    setTimeout(() => { setUploadStatus('idle'); setUploadMsg(''); }, 5000);
-  }, [chunkMinutes, fetchStatus, fetchTimeline]);
-
-  const startCapture = async () => {
-    setCaptureError(null);
-    try {
-      const stream = await (navigator.mediaDevices as MediaDevices & {
-        getDisplayMedia(opts: object): Promise<MediaStream>;
-      }).getDisplayMedia({
-        video: { frameRate: { ideal: 5, max: 10 }, width: { ideal: 1280 } },
-        audio: true,
-      });
-
-      streamRef.current = stream;
-      setIsCapturing(true);
-
-      // Show live preview
-      if (previewVideoRef.current) {
-        previewVideoRef.current.srcObject = stream;
-        previewVideoRef.current.play().catch(() => {});
-      }
-
-      // Setup MediaRecorder using reliable streaming format
-      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
-        ? 'video/webm;codecs=vp8,opus'
-        : MediaRecorder.isTypeSupported('video/webm')
-        ? 'video/webm'
-        : '';
-
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      recorderRef.current = recorder;
-
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
-
-      recorder.start(1000); // collect 1-second data chunks
-
-      // Notify backend
-      await fetch(`${API}/api/memory/start`, { method: 'POST' });
-
-      // Countdown timer
-      let secsLeft = chunkMinutes * 60;
-      setChunkSecs(secsLeft);
-      setTotalElapsed(0);
-
-      countdownRef.current = setInterval(async () => {
-        secsLeft -= 1;
-        setChunkSecs(secsLeft);
-        setTotalElapsed(t => t + 1);
-
-        if (secsLeft <= 0) {
-          // Time to send the chunk
-          secsLeft = chunkMinutes * 60;
-          setChunkSecs(secsLeft);
-          await sendChunk();
-        }
-      }, 1000);
-
-      // Handle user stopping screen share from browser UI
-      stream.getVideoTracks()[0].addEventListener('ended', stopCapture);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Permission denied';
-      setCaptureError(msg);
-      console.error('[Capture] Error:', msg);
-    }
-  };
-
-  const stopCapture = useCallback(async () => {
-    if (countdownRef.current) { clearInterval(countdownRef.current); countdownRef.current = null; }
-    if (recorderRef.current) { recorderRef.current.stop(); recorderRef.current = null; }
-    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
-    if (previewVideoRef.current) { previewVideoRef.current.srcObject = null; }
-
-    setIsCapturing(false);
-    setChunkSecs(chunkMinutes * 60);
-
-    await fetch(`${API}/api/memory/stop`, { method: 'POST' });
-  }, [chunkMinutes]);
-
-  // Send final chunk when stopping
-  const handleStopClick = async () => {
-    if (chunksRef.current.length > 0) await sendChunk();
-    await stopCapture();
-  };
-
   const runIngest = async () => {
     setIngestResult(null);
     const body = ingestType === 'event'
@@ -314,6 +172,7 @@ export function MemoryBookManager() {
       await fetchStatus();
     } catch { setIngestResult('✗ Network error'); }
   };
+
 
   // ─── Styles ──────────────────────────────────────────────────────────────────
 
@@ -332,10 +191,6 @@ export function MemoryBookManager() {
     select: { background: '#1e1d2e', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '6px', color: '#f8fafc', padding: '5px 8px', fontSize: '11px', colorScheme: 'dark' as const },
   };
 
-  // Progress bar color for countdown
-  const pct = (chunkMinutes * 60 - chunkSecs) / (chunkMinutes * 60);
-  const progressColor = pct > 0.8 ? '#fb923c' : pct > 0.5 ? '#facc15' : '#34d399';
-
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -348,7 +203,7 @@ export function MemoryBookManager() {
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 700, color: '#c084fc' }}>
               <BookOpen size={16} /> Memory Book
             </span>
-            {isCapturing && <LiveDot />}
+            {agentRunning && <LiveDot />}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: '10px', color: '#94a3b8' }}>
@@ -359,9 +214,9 @@ export function MemoryBookManager() {
         </div>
         <div style={S.tabs}>
           {([
-            ['capture', 'Capture', <Video size={13} key="v" />],
             ['book', 'Timeline', <Calendar size={13} key="c" />],
-            ['states', 'States', <Activity size={13} key="a" />]
+            ['states', 'States', <Activity size={13} key="a" />],
+            ['ingest', 'Ingest Tool', <Upload size={13} key="u" />]
           ] as const).map(([id, label, icon]) => (
             <button key={id} style={{ ...S.tab(activeTab === id), display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={() => setActiveTab(id as any)}>
               {icon}
@@ -374,114 +229,12 @@ export function MemoryBookManager() {
       {/* ── Body ───────────────────────────────────────────────────────── */}
       <div style={S.body}>
 
-        {/* ═══ TAB: Capture ═══════════════════════════════════════════════ */}
-        {activeTab === 'capture' && (
+        {/* ═══ TAB: Ingest Tool ═══════════════════════════════════════════ */}
+        {activeTab === 'ingest' && (
           <>
-            {/* Main capture card */}
-            <div style={{ ...S.card(), border: isCapturing ? '1px solid rgba(239,68,68,0.3)' : '1px solid rgba(255,255,255,0.07)' }}>
 
-              {/* Live preview */}
-              <div style={{ position: 'relative', borderRadius: '8px', overflow: 'hidden', background: '#000', marginBottom: '12px', minHeight: isCapturing ? '140px' : '0px', transition: 'min-height 0.3s' }}>
-                <video
-                  ref={previewVideoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  style={{ width: '100%', display: isCapturing ? 'block' : 'none', borderRadius: '8px' }}
-                />
-                {isCapturing && (
-                  <div style={{ position: 'absolute', top: '8px', left: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
-                    <LiveDot />
-                    <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', background: 'rgba(0,0,0,0.5)', padding: '2px 6px', borderRadius: '4px' }}>
-                      {fmtDuration(totalElapsed)} total
-                    </span>
-                  </div>
-                )}
-              </div>
 
-              {/* Countdown timer */}
-              {isCapturing && (
-                <div style={{ marginBottom: '12px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#64748b', marginBottom: '5px' }}>
-                    <span style={{ fontWeight: 700, color: '#94a3b8' }}>Next Qwen3-VL analysis in</span>
-                    <span style={{ fontWeight: 800, color: progressColor }}>{fmtDuration(chunkSecs)}</span>
-                  </div>
-                  <div style={{ height: '5px', borderRadius: '4px', background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
-                    <div style={{ height: '100%', borderRadius: '4px', background: progressColor, width: `${pct * 100}%`, transition: 'width 1s linear, background 0.5s' }} />
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#475569', marginTop: '3px' }}>
-                    <span>{chunkCount} chunk{chunkCount !== 1 ? 's' : ''} analyzed</span>
-                    <span>{chunkMinutes}min interval</span>
-                  </div>
-                </div>
-              )}
 
-              {/* Controls */}
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                {!isCapturing ? (
-                  <>
-                    <button style={S.btn('52', '211', '153')} onClick={startCapture}>
-                      ● Start Screen Capture
-                    </button>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto' }}>
-                      <span style={{ fontSize: '10px', color: '#64748b' }}>Interval:</span>
-                      <select style={S.select} value={chunkMinutes} onChange={e => setChunkMinutes(Number(e.target.value))}>
-                        <option value={1} style={{ background: '#1e1d2e', color: '#f8fafc' }}>1 min (demo)</option>
-                        <option value={5} style={{ background: '#1e1d2e', color: '#f8fafc' }}>5 min</option>
-                        <option value={10} style={{ background: '#1e1d2e', color: '#f8fafc' }}>10 min</option>
-                        <option value={15} style={{ background: '#1e1d2e', color: '#f8fafc' }}>15 min</option>
-                        <option value={30} style={{ background: '#1e1d2e', color: '#f8fafc' }}>30 min</option>
-                      </select>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <button style={{ ...S.btn('239', '68', '68'), display: 'inline-flex', alignItems: 'center', gap: '5px' }} onClick={handleStopClick}>
-                      Stop & Save
-                    </button>
-                    <button
-                      style={{ ...S.btn('167', '139', '250'), display: 'inline-flex', alignItems: 'center', gap: '5px', opacity: uploadStatus === 'uploading' || uploadStatus === 'analyzing' ? 0.5 : 1 }}
-                      onClick={sendChunk}
-                      disabled={uploadStatus === 'uploading' || uploadStatus === 'analyzing'}
-                    >
-                      <Upload size={11} /> Send Now
-                    </button>
-                  </>
-                )}
-              </div>
-
-              {captureError && (
-                <div style={{ marginTop: '10px', fontSize: '10px', color: '#f87171', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '6px', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <AlertCircle size={13} /> {captureError}
-                </div>
-              )}
-            </div>
-
-            {/* Upload / Analysis status */}
-            {uploadMsg && (
-              <div style={{
-                ...S.card(),
-                border: `1px solid ${uploadStatus === 'done' ? 'rgba(52,211,153,0.3)' : uploadStatus === 'error' ? 'rgba(239,68,68,0.3)' : 'rgba(167,139,250,0.3)'}`,
-                fontSize: '11px',
-                color: uploadStatus === 'done' ? '#34d399' : uploadStatus === 'error' ? '#f87171' : '#c084fc',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span>
-                    {uploadStatus === 'uploading' ? <Upload size={16} /> : uploadStatus === 'analyzing' ? <Activity size={16} /> : uploadStatus === 'done' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
-                  </span>
-                  <div>
-                    <div style={{ fontWeight: 700 }}>
-                      {uploadStatus === 'uploading' ? 'Uploading to Supabase…' : uploadStatus === 'analyzing' ? 'Qwen3-VL-Flash Analyzing…' : uploadMsg}
-                    </div>
-                    {(uploadStatus === 'uploading' || uploadStatus === 'analyzing') && (
-                      <div style={{ fontSize: '9px', color: '#64748b', marginTop: '2px' }}>
-                        {uploadStatus === 'uploading' ? 'Sending to Supabase Storage bucket "qwen"' : 'Model: qwen3-vl-flash → extracting events and states'}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
 
             {/* Latest Qwen analysis */}
             {latestAnalysis && (
@@ -566,33 +319,72 @@ export function MemoryBookManager() {
         )}
 
         {/* ═══ TAB: Timeline ══════════════════════════════════════════════ */}
-        {activeTab === 'book' && (
-          <>
-            <div style={S.label}>Event Timeline (Last 7 Days)</div>
-            {timeline.length === 0 ? (
-              <div style={{ color: '#475569', textAlign: 'center', padding: '24px', fontSize: '11px' }}>No events yet. Start the capture agent.</div>
-            ) : (
-              timeline.map((ev) => (
-                <div key={ev.id} style={S.eventRow}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span style={{ fontWeight: 700, color: '#cbd5e1' }}>{ev.actor} · {ev.action}</span>
-                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                      <TierBadge tier={ev.tier} />
-                      <span style={{ fontSize: '9px', color: '#475569' }}>{fmtDate(ev.timestamp)} {fmtTime(ev.timestamp)}</span>
+        {activeTab === 'book' && (() => {
+          const videoEvents = timeline.filter(ev => ev.action !== 'ANALYSIS_FAILED' && ev.action !== 'VISUAL_SNAPSHOT' && ev.action !== 'SCREEN_ANALYZED' && ev.actor !== 'System' && ev.actor !== 'Qwen-VL');
+          const totalPages = Math.max(1, Math.ceil(videoEvents.length / 10));
+          const paginated = videoEvents.slice((timelinePage - 1) * 10, timelinePage * 10);
+
+          return (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={S.label}>Event Timeline (Last 7 Days)</div>
+                <span style={{ fontSize: '10px', color: '#94a3b8' }}>
+                  Total Video Events: {videoEvents.length}
+                </span>
+              </div>
+              {videoEvents.length === 0 ? (
+                <div style={{ color: '#475569', textAlign: 'center', padding: '24px', fontSize: '11px' }}>No video events yet. Start the capture agent.</div>
+              ) : (
+                <>
+                  {paginated.map((ev) => (
+                    <div key={ev.id} style={S.eventRow}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span style={{ fontWeight: 700, color: '#cbd5e1' }}>{ev.actor} · {ev.action}</span>
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                          <TierBadge tier={ev.tier} />
+                          <span style={{ fontSize: '9px', color: '#475569' }}>{fmtDate(ev.timestamp)} {fmtTime(ev.timestamp)}</span>
+                        </div>
+                      </div>
+                      <div style={{ color: '#94a3b8' }}>{ev.object}</div>
+                      {ev.raw_content && <div style={{ color: '#64748b', fontSize: '10px', fontStyle: 'italic' }}>{ev.raw_content.slice(0, 130)}{ev.raw_content.length > 130 ? '…' : ''}</div>}
+                      {ev.topic_tags?.length > 0 && (
+                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                          {ev.topic_tags.map((t, i) => <span key={i} style={{ fontSize: '9px', color: '#818cf8', background: 'rgba(129,140,248,0.1)', borderRadius: '3px', padding: '1px 5px' }}>{t}</span>)}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                  <div style={{ color: '#94a3b8' }}>{ev.object}</div>
-                  {ev.raw_content && <div style={{ color: '#64748b', fontSize: '10px', fontStyle: 'italic' }}>{ev.raw_content.slice(0, 130)}{ev.raw_content.length > 130 ? '…' : ''}</div>}
-                  {ev.topic_tags?.length > 0 && (
-                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                      {ev.topic_tags.map((t, i) => <span key={i} style={{ fontSize: '9px', color: '#818cf8', background: 'rgba(129,140,248,0.1)', borderRadius: '3px', padding: '1px 5px' }}>{t}</span>)}
+                  ))}
+                  {totalPages > 1 && (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 4px', marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                      <span style={{ fontSize: '10px', color: '#94a3b8' }}>
+                        Showing {(timelinePage - 1) * 10 + 1} - {Math.min(timelinePage * 10, videoEvents.length)} of {videoEvents.length}
+                      </span>
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                        <button
+                          disabled={timelinePage <= 1}
+                          onClick={() => setTimelinePage(p => Math.max(1, p - 1))}
+                          style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)', background: timelinePage <= 1 ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.08)', color: timelinePage <= 1 ? '#475569' : '#f8fafc', cursor: timelinePage <= 1 ? 'not-allowed' : 'pointer', fontSize: '10px' }}
+                        >
+                          Prev
+                        </button>
+                        <span style={{ fontSize: '10px', color: '#c084fc', fontWeight: 700 }}>
+                          Page {timelinePage} / {totalPages}
+                        </span>
+                        <button
+                          disabled={timelinePage >= totalPages}
+                          onClick={() => setTimelinePage(p => Math.min(totalPages, p + 1))}
+                          style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)', background: timelinePage >= totalPages ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.08)', color: timelinePage >= totalPages ? '#475569' : '#f8fafc', cursor: timelinePage >= totalPages ? 'not-allowed' : 'pointer', fontSize: '10px' }}
+                        >
+                          Next
+                        </button>
+                      </div>
                     </div>
                   )}
-                </div>
-              ))
-            )}
-          </>
-        )}
+                </>
+              )}
+            </>
+          );
+        })()}
 
         {/* ═══ TAB: States ════════════════════════════════════════════════ */}
         {activeTab === 'states' && (
