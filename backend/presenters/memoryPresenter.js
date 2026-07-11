@@ -97,8 +97,15 @@ export async function handleAgentChunk(req, res) {
     const sessionId = req.body?.session_id || `session_${Date.now()}`;
     const chunkTimestamp = req.body?.chunk_timestamp || new Date().toISOString();
 
-    console.log(`\n[MemoryAgent] Received chunk: ${originalName} (${(rawBuffer.length / 1024 / 1024).toFixed(1)} MB)`);
-    addToLog({ type: 'chunk_received', filename: originalName, size_mb: (rawBuffer.length / 1024 / 1024).toFixed(1) });
+    const maxMb = parseFloat(process.env.QWEN_VL_MAX_MB) || 25;
+    const sizeMb = rawBuffer.length / 1024 / 1024;
+    if (sizeMb > maxMb) {
+      console.warn(`[MemoryAgent] Video chunk size (${sizeMb.toFixed(1)} MB) exceeds env limit (${maxMb} MB).`);
+      return res.status(400).json({ error: `Video chunk size (${sizeMb.toFixed(1)} MB) exceeds limit (${maxMb} MB).` });
+    }
+
+    console.log(`\n[MemoryAgent] Received chunk: ${originalName} (${sizeMb.toFixed(1)} MB)`);
+    addToLog({ type: 'chunk_received', filename: originalName, size_mb: sizeMb.toFixed(1) });
 
     // ── 1. Convert to universal MP4 format ─────────────────────────────
     let mp4File;

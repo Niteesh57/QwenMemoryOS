@@ -38,10 +38,17 @@ export const handleAskRequest = async (req, res) => {
     // 2. Write the metadata header (view-specific format)
     res.write(`NEEDSUI:${state.needsUI}\n`);
 
-    // 3. Stream response from LLM
+    // 3. Stream response from LLM (sanitize oversized tool/text messages to avoid 6MB limit)
+    const sanitizedMessages = state.messages.map(m => {
+      if (typeof m.content === 'string' && m.content.length > 50000) {
+        return { ...m, content: m.content.slice(0, 50000) + '\n...[truncated to prevent exceeding max request body size]' };
+      }
+      return m;
+    });
+
     const stream = await openai.chat.completions.create({
       model: MODEL_NAME,
-      messages: state.messages,
+      messages: sanitizedMessages,
       stream: true,
     });
 
@@ -85,7 +92,13 @@ export const handleAskVisualRequest = async (req, res) => {
     let visualMessageContent = [{ type: "text", text: prompt }];
 
     if (req.file && req.file.buffer) {
-      console.log(`[API Ask Visual Presenter] Processing temporary screen recording (${(req.file.buffer.length / 1024 / 1024).toFixed(2)} MB)...`);
+      const maxMb = parseFloat(process.env.QWEN_VL_MAX_MB) || 25;
+      const sizeMb = req.file.buffer.length / 1024 / 1024;
+      if (sizeMb > maxMb) {
+        console.warn(`[API Ask Visual Presenter] Video size (${sizeMb.toFixed(1)} MB) exceeds env limit (${maxMb} MB).`);
+        return res.status(400).json({ error: `Video size (${sizeMb.toFixed(1)} MB) exceeds limit (${maxMb} MB).` });
+      }
+      console.log(`[API Ask Visual Presenter] Processing temporary screen recording (${sizeMb.toFixed(2)} MB)...`);
 
       const tempId = `temp_query_${deviceId}_${Date.now()}`;
       const converted = await convertToMp4(req.file.buffer, `${tempId}.webm`);
@@ -130,9 +143,17 @@ Instructions:
       : MODEL_NAME;
 
     console.log(`[API Ask Visual Presenter] Requesting completion model: ${modelToUse}...`);
+    // Truncate oversized text/tool messages to prevent DashScope 6MB body limit error
+    const sanitizedMessages = finalMessages.map(m => {
+      if (typeof m.content === 'string' && m.content.length > 50000) {
+        return { ...m, content: m.content.slice(0, 50000) + '\n...[truncated to prevent exceeding max request body size]' };
+      }
+      return m;
+    });
+
     const stream = await openai.chat.completions.create({
       model: modelToUse,
-      messages: finalMessages,
+      messages: sanitizedMessages,
       stream: true,
     });
 

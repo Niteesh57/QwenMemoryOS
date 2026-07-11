@@ -111,7 +111,8 @@ async function callQwenVL(videoUrl, durationMinutes) {
 // ─── Parse and Store ──────────────────────────────────────────────────────────
 
 export async function analyzeAndStore(videoUrl, options = {}) {
-  const { durationMinutes = 10, sessionId = 'session', chunkTimestamp = new Date().toISOString(), deviceId = 'DEV-DEFAULT' } = options;
+  const defaultDuration = parseFloat(process.env.QWEN_VL_CHUNK_MINUTES) || 10;
+  const { durationMinutes = defaultDuration, sessionId = 'session', chunkTimestamp = new Date().toISOString(), deviceId = 'DEV-DEFAULT' } = options;
 
   let rawText;
   try {

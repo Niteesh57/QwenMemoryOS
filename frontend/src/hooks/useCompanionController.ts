@@ -211,6 +211,7 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
   // Cache voices in a ref — loaded once on mount, refreshed on voiceschanged
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
+  const ttsQueueRef = useRef<string[]>([]);
 
   const spokenTextIndexRef = useRef<number>(0);
   const speechVolumeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -303,6 +304,7 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
   };
 
   const stopSpeech = () => {
+    ttsQueueRef.current = [];
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
@@ -325,7 +327,7 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
     let keepAliveCounter = 0;
     ttsVolUpdateRef.current = 0;
     speechVolumeIntervalRef.current = setInterval(() => {
-      if ('speechSynthesis' in window && window.speechSynthesis.speaking) {
+      if (('speechSynthesis' in window && window.speechSynthesis.speaking) || activeAudioRef.current) {
         const now = Date.now();
         if (now - ttsVolUpdateRef.current >= 200) { // throttle to 5fps
           ttsVolUpdateRef.current = now;
@@ -368,6 +370,102 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
     return voicesRef.current;
   };
 
+  const processTtsQueue = (selectedVoice: SpeechSynthesisVoice, savedRate: number, savedPitch: number, savedVolume: number) => {
+    if (activeAudioRef.current || ttsQueueRef.current.length === 0) return;
+
+    const nextSpeech = ttsQueueRef.current.shift();
+    if (!nextSpeech) return;
+
+    console.log('[TTS] Playing via Backend Edge Cloud TTS Engine:', selectedVoice.name);
+    const voiceId = (selectedVoice as any).shortName || selectedVoice.voiceURI;
+    const audioUrl = `http://localhost:3000/api/tts/speak?text=${encodeURIComponent(nextSpeech)}&voice=${encodeURIComponent(voiceId)}&rate=${savedRate}&pitch=${savedPitch}&volume=${savedVolume}`;
+    
+    const audio = new Audio(audioUrl);
+    activeAudioRef.current = audio;
+
+    audio.onplay = () => {
+      setIsTtsSpeaking(true);
+      setAssistantState('processing');
+      simulateSpeechVolume();
+    };
+
+    const finishAudio = () => {
+      if (activeAudioRef.current === audio) {
+        activeAudioRef.current = null;
+      }
+      if (ttsQueueRef.current.length > 0) {
+        processTtsQueue(selectedVoice, savedRate, savedPitch, savedVolume);
+      } else {
+        setIsTtsSpeaking(false);
+        setVolume(0);
+        setAssistantState('idle');
+      }
+    };
+
+    audio.onended = () => {
+      finishAudio();
+    };
+
+    const playOfflineFallback = () => {
+      console.warn('[Cloud TTS] Cloud audio failed/offline. Automatically falling back to offline inbuilt voice.');
+      if (activeAudioRef.current === audio) {
+        try { activeAudioRef.current.pause(); } catch (_) {}
+        activeAudioRef.current = null;
+      }
+      const allLocal = window.speechSynthesis.getVoices();
+      const isMale = selectedVoice.name.toLowerCase().includes('william') || selectedVoice.name.toLowerCase().includes('david') || selectedVoice.name.toLowerCase().includes('male');
+      const localVoice = allLocal.find(v => {
+        const n = v.name.toLowerCase();
+        return isMale ? (n.includes('david') || n.includes('mark') || n.includes('male'))
+                      : (n.includes('zira') || n.includes('hazel') || n.includes('female'));
+      }) ?? allLocal.find(v => v.lang.startsWith('en')) ?? allLocal[0];
+
+      if (!localVoice && !('speechSynthesis' in window)) {
+        finishAudio();
+        return;
+      }
+
+      const utterance = new SpeechSynthesisUtterance(nextSpeech);
+      if (localVoice) {
+        utterance.voice = localVoice;
+        utterance.lang = localVoice.lang;
+      } else {
+        utterance.lang = 'en-US';
+      }
+      utterance.rate = savedRate;
+      utterance.pitch = savedPitch;
+      utterance.volume = savedVolume;
+
+      utterance.onstart = () => {
+        setIsTtsSpeaking(true);
+        setAssistantState('processing');
+        simulateSpeechVolume();
+      };
+      utterance.onend = () => {
+        finishAudio();
+      };
+      utterance.onerror = () => {
+        finishAudio();
+      };
+
+      window.speechSynthesis.speak(utterance);
+    };
+
+    audio.onerror = (e) => {
+      if (activeAudioRef.current !== audio) return;
+      console.warn('[Cloud TTS] Audio element error:', e);
+      playOfflineFallback();
+    };
+
+    audio.play().catch(err => {
+      if (err?.name === 'AbortError' || err?.message?.toLowerCase()?.includes('abort') || activeAudioRef.current !== audio) {
+        return;
+      }
+      console.warn('[Cloud TTS] Playback start failed:', err);
+      playOfflineFallback();
+    });
+  };
+
   const speakUtterance = (text: string) => {
     const cleanSpeech = text
       .replace(/https?:\/\/[^\s]+/g, 'link')
@@ -397,93 +495,8 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
                          !window.speechSynthesis.getVoices().some(v => v.name === selectedVoice.name);
 
     if (isCloudVoice) {
-      console.log('[TTS] Playing via Backend Edge Cloud TTS Engine:', selectedVoice.name);
-      if (activeAudioRef.current) {
-        activeAudioRef.current.pause();
-      }
-
-      const voiceId = (selectedVoice as any).shortName || selectedVoice.voiceURI;
-      const audioUrl = `http://localhost:3000/api/tts/speak?text=${encodeURIComponent(cleanSpeech)}&voice=${encodeURIComponent(voiceId)}&rate=${savedRate}&pitch=${savedPitch}&volume=${savedVolume}`;
-      
-      const audio = new Audio(audioUrl);
-      activeAudioRef.current = audio;
-
-      audio.onplay = () => {
-        setIsTtsSpeaking(true);
-        setAssistantState('processing');
-        simulateSpeechVolume();
-      };
-
-      audio.onended = () => {
-        setIsTtsSpeaking(false);
-        setVolume(0);
-        setAssistantState('idle');
-        activeAudioRef.current = null;
-      };
-
-      const playOfflineFallback = () => {
-        console.warn('[Cloud TTS] Cloud audio failed/offline. Automatically falling back to offline inbuilt voice.');
-        if (activeAudioRef.current) {
-          try {
-            activeAudioRef.current.pause();
-          } catch (_) {}
-          activeAudioRef.current = null;
-        }
-        const allLocal = window.speechSynthesis.getVoices();
-        const isMale = selectedVoice.name.toLowerCase().includes('william') || selectedVoice.name.toLowerCase().includes('david') || selectedVoice.name.toLowerCase().includes('male');
-        const localVoice = allLocal.find(v => {
-          const n = v.name.toLowerCase();
-          return isMale ? (n.includes('david') || n.includes('mark') || n.includes('male'))
-                        : (n.includes('zira') || n.includes('hazel') || n.includes('female'));
-        }) ?? allLocal.find(v => v.lang.startsWith('en')) ?? allLocal[0];
-
-        if (!localVoice && !('speechSynthesis' in window)) {
-          setIsTtsSpeaking(false);
-          setVolume(0);
-          setAssistantState('idle');
-          activeAudioRef.current = null;
-          return;
-        }
-
-        const utterance = new SpeechSynthesisUtterance(cleanSpeech);
-        if (localVoice) {
-          utterance.voice = localVoice;
-          utterance.lang = localVoice.lang;
-        } else {
-          utterance.lang = 'en-US';
-        }
-        utterance.rate = savedRate;
-        utterance.pitch = savedPitch;
-        utterance.volume = savedVolume;
-
-        utterance.onstart = () => {
-          setIsTtsSpeaking(true);
-          setAssistantState('processing');
-          simulateSpeechVolume();
-        };
-        utterance.onend = () => {
-          setIsTtsSpeaking(false);
-          setVolume(0);
-          setAssistantState('idle');
-        };
-        utterance.onerror = () => {
-          setIsTtsSpeaking(false);
-          setVolume(0);
-          setAssistantState('idle');
-        };
-
-        window.speechSynthesis.speak(utterance);
-      };
-
-      audio.onerror = (e) => {
-        console.warn('[Cloud TTS] Audio element error:', e);
-        playOfflineFallback();
-      };
-
-      audio.play().catch(err => {
-        console.warn('[Cloud TTS] Playback start failed:', err);
-        playOfflineFallback();
-      });
+      ttsQueueRef.current.push(cleanSpeech);
+      processTtsQueue(selectedVoice, savedRate, savedPitch, savedVolume);
       return;
     }
 
@@ -809,11 +822,11 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
             setResponseText(displayContent);
             setShouldDisplayPanel(true);
             if (needsUI) {
-              setPipWidth(650);
-              setPipHeight(460);
+              setPipWidth(360);
+              setPipHeight(280);
             } else {
-              setPipWidth(480);
-              setPipHeight(380);
+              setPipWidth(340);
+              setPipHeight(260);
             }
           } else {
             // Speech-only: no panel, stay small
@@ -860,8 +873,8 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
         setResponseText(cleanText);
         setResponseHtml(cleanHtml);
         setShouldDisplayPanel(true);
-        setPipWidth(650);
-        setPipHeight(450);
+        setPipWidth(360);
+        setPipHeight(280);
       } else {
         setResponseHtml(null);
         const hasCodeBlock = cleanText.includes('```');
@@ -870,8 +883,8 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
         if (cleanText && (needsUI || hasCodeBlock || isLongText)) {
           setResponseText(cleanText);
           setShouldDisplayPanel(true);
-          setPipWidth(hasCodeBlock ? 480 : 380);
-          setPipHeight(380);
+          setPipWidth(340);
+          setPipHeight(260);
         } else {
           // Speech-only: don't show the panel at all
           setResponseText('');
@@ -889,7 +902,7 @@ export function useCompanionController(options?: UseCompanionControllerOptions):
       setResponseText(errorText);
       setResponseHtml(null);
       setAssistantState('idle');
-      setPipWidth(480);
+      setPipWidth(340);
       options?.onInteractionComplete?.(query, errorText, null);
     } finally {
       setIsProcessing(false);
